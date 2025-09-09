@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-activity"></i> Delta Exchange Trade History</h2>
+            <div>
+                <button id="refreshTrades" class="btn btn-outline-primary">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+                <span class="badge bg-success ms-2" id="updateIndicator">Live</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-3">
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 class="text-primary" id="totalFills">0</h4>
+                <small class="text-muted">Total Fills</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 class="text-success" id="buyOrders">0</h4>
+                <small class="text-muted">Buy Orders</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 class="text-danger" id="sellOrders">0</h4>
+                <small class="text-muted">Sell Orders</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 class="text-warning" id="todayVolume">₹0</h4>
+                <small class="text-muted">Today's Volume</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 id="totalNotional" class="text-info">₹0</h4>
+                <small class="text-muted">Total Volume</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 id="totalCommission" class="text-secondary">₹0.00</h4>
+                <small class="text-muted">Commission Paid</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Fills Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="bi bi-receipt"></i> Fill History
+                    <small class="text-muted ms-2">Real-time Delta Exchange fills</small>
+                </div>
+                <div>
+                    <div class="legend d-flex gap-3">
+                        <span class="badge bg-success">Buy</span>
+                        <span class="badge bg-danger">Sell</span>
+                        <span class="badge bg-info">Maker</span>
+                        <span class="badge bg-warning text-dark">Taker</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="tradesContainer">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <div class="mt-2">Loading fills...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- No Fills Message -->
+<div id="noTradesMessage" class="row" style="display: none;">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-receipt display-1 text-muted"></i>
+                <h3 class="mt-3 text-muted">No Fills Yet</h3>
+                <p class="text-muted">Execute trades to see your fill history from Delta Exchange.</p>
+                <a href="/" class="btn btn-primary">
+                    <i class="bi bi-arrow-left"></i> Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.trade-row.active {
+    background: linear-gradient(135deg, rgba(40, 167, 69, 0.1) 0%, rgba(40, 167, 69, 0.05) 100%);
+    border-left: 4px solid #28a745;
+}
+.trade-row.today {
+    background: linear-gradient(135deg, rgba(40, 167, 69, 0.08) 0%, rgba(40, 167, 69, 0.03) 100%);
+    border-left: 4px solid #28a745;
+}
+.trade-row.yesterday {
+    background: linear-gradient(135deg, rgba(255, 193, 7, 0.08) 0%, rgba(255, 193, 7, 0.03) 100%);
+    border-left: 4px solid #ffc107;
+}
+.trade-row.day-before {
+    background: linear-gradient(135deg, rgba(253, 126, 20, 0.08) 0%, rgba(253, 126, 20, 0.03) 100%);
+    border-left: 4px solid #fd7e14;
+}
+.trade-row.older {
+    background: linear-gradient(135deg, rgba(108, 117, 125, 0.08) 0%, rgba(108, 117, 125, 0.03) 100%);
+    border-left: 4px solid #6c757d;
+}
+.trade-card {
+    margin-bottom: 0.5rem;
+    transition: all 0.3s ease;
+}
+.trade-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+.profit-positive { color: #28a745 !important; }
+.profit-negative { color: #dc3545 !important; }
+.profit-neutral { color: #6c757d !important; }
+</style>
+
+<script>
+let tradesUpdateInterval;
+
+function updateTrades() {
+    document.getElementById('updateIndicator').textContent = 'Updating...';
+    document.getElementById('updateIndicator').className = 'badge bg-warning ms-2';
+    
+    fetch('/api/trades')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderTrades(data.trades);
+                updateSummaryStats(data.trades);
+                document.getElementById('updateIndicator').textContent = 'Live';
+                document.getElementById('updateIndicator').className = 'badge bg-success ms-2';
+            } else {
+                showError(data.error || 'Failed to load trade fills');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching fills:', error);
+            showError('Connection error - Unable to fetch Delta Exchange data');
+            document.getElementById('updateIndicator').textContent = 'Error';
+            document.getElementById('updateIndicator').className = 'badge bg-danger ms-2';
+        });
+}
+
+function renderTrades(trades) {
+    const container = document.getElementById('tradesContainer');
+    const noTradesMsg = document.getElementById('noTradesMessage');
+    
+    if (!trades || trades.length === 0) {
+        container.style.display = 'none';
+        noTradesMsg.style.display = 'block';
+        return;
+    }
+    
+    container.style.display = 'block';
+    noTradesMsg.style.display = 'none';
+    
+    let html = '';
+    
+    trades.forEach((fill, index) => {
+        const fillTime = new Date(fill.timestamp).toLocaleString();
+        const sideClass = fill.side === 'BUY' ? 'text-success' : 'text-danger';
+        const roleClass = fill.role === 'Maker' ? 'bg-info' : 'bg-warning text-dark';
+        
+        // Get order type from metadata if available
+        const orderType = fill.order_type || 'Market';
+        
+        // Format numbers in INR
+        const price_inr = parseFloat(fill.price_inr || 0).toFixed(0);
+        const size = parseFloat(fill.size || 0);
+        const value_inr = parseFloat(fill.value_inr || 0).toFixed(0);
+        const fee_inr = parseFloat(fill.fee_inr || 0).toFixed(2);
+        
+        html += `
+            <div class="trade-card mb-3">
+                <div class="card fill-row">
+                    <div class="card-body">
+                        <div class="row align-items-center">
+                            <div class="col-md-2">
+                                <div class="d-flex flex-column">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <strong class="${sideClass}">${fill.side}</strong>
+                                        <span class="badge ${roleClass}">${fill.role}</span>
+                                    </div>
+                                    <small class="text-muted">${fill.trade_id}</small>
+                                    <small class="text-muted">${orderType}</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="d-flex flex-column">
+                                    <strong>${fill.symbol}</strong>
+                                    <small class="text-muted">Fill ID: ${fill.trade_id.split('_')[1]?.substr(0,8) || 'N/A'}</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="d-flex flex-column">
+                                    <strong>Time:</strong>
+                                    <small>${fillTime.split(',')[0]}</small>
+                                    <small class="text-muted">${fillTime.split(',')[1]}</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="d-flex flex-column">
+                                    <strong>Size:</strong>
+                                    <span>${size} BTC</span>
+                                    <strong class="mt-1">Price:</strong>
+                                    <span class="text-primary">₹${price_inr}</span>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="d-flex flex-column">
+                                    <strong>Value:</strong>
+                                    <span class="text-info">₹${value_inr}</span>
+                                    <strong class="mt-1">Fee:</strong>
+                                    <span class="text-warning">₹${fee_inr}</span>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="d-flex flex-column">
+                                    <strong>Order ID:</strong>
+                                    <code class="small">${fill.order_id || 'N/A'}</code>
+                                    <small class="text-muted">Delta Exchange</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+function updateSummaryStats(trades) {
+    if (!trades) return;
+    
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Filter trades by side
+    const buyOrders = trades.filter(t => t.side === 'BUY');
+    const sellOrders = trades.filter(t => t.side === 'SELL');
+    
+    // Filter today's trades
+    const todayTrades = trades.filter(t => {
+        const tradeDate = new Date(t.timestamp).toISOString().split('T')[0];
+        return tradeDate === today;
+    });
+    
+    // Calculate totals in INR
+    const totalNotional = trades.reduce((sum, t) => sum + (parseFloat(t.value_inr) || 0), 0);
+    const totalCommission = trades.reduce((sum, t) => sum + (parseFloat(t.fee_inr) || 0), 0);
+    const todayVolume = todayTrades.reduce((sum, t) => sum + (parseFloat(t.value_inr) || 0), 0);
+    
+    // Update UI elements
+    document.getElementById('totalFills').textContent = trades.length;
+    document.getElementById('buyOrders').textContent = buyOrders.length;
+    document.getElementById('sellOrders').textContent = sellOrders.length;
+    
+    // Format and display monetary values in INR
+    document.getElementById('todayVolume').textContent = `₹${todayVolume.toFixed(0)}`;
+    document.getElementById('totalNotional').textContent = `₹${totalNotional.toFixed(0)}`;
+    document.getElementById('totalCommission').textContent = `₹${totalCommission.toFixed(2)}`;
+}
+
+function showError(message) {
+    const container = document.getElementById('tradesContainer');
+    container.innerHTML = `
+        <div class="alert alert-danger text-center">
+            <i class="bi bi-exclamation-triangle"></i>
+            <strong>Error:</strong> ${message}
+        </div>
+    `;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Initial load
+    updateTrades();
+    
+    // Auto-refresh every 30 seconds
+    tradesUpdateInterval = setInterval(updateTrades, 30000);
+    
+    // Manual refresh button
+    document.getElementById('refreshTrades').addEventListener('click', function() {
+        updateTrades();
+    });
+});
+
+// Clean up interval when leaving page
+window.addEventListener('beforeunload', function() {
+    if (tradesUpdateInterval) {
+        clearInterval(tradesUpdateInterval);
+    }
+});
+</script>
+{% endblock %}

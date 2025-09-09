@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-file-text"></i> Trading Logs</h2>
+            <div>
+                <button id="refreshLogs" class="btn btn-outline-primary">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+                <button id="clearLogs" class="btn btn-outline-danger">
+                    <i class="bi bi-trash"></i> Clear Logs
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-terminal"></i> Log Output</span>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="autoScroll" checked>
+                    <label class="form-check-label" for="autoScroll">
+                        Auto-scroll
+                    </label>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div id="logContent" class="log-content">
+                    {% if log_content %}
+                        {{ log_content }}
+                    {% else %}
+                        <div class="text-center text-muted p-4">
+                            <i class="bi bi-file-text display-4"></i>
+                            <h5 class="mt-3">No logs available</h5>
+                            <p>Start the trading bot to generate logs.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Log Level Filter -->
+<div class="row mt-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-funnel"></i> Log Filters
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="form-label">Log Level Filter</label>
+                        <select id="logLevelFilter" class="form-select">
+                            <option value="all">All Levels</option>
+                            <option value="DEBUG">Debug</option>
+                            <option value="INFO">Info</option>
+                            <option value="WARNING">Warning</option>
+                            <option value="ERROR">Error</option>
+                            <option value="CRITICAL">Critical</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Search Logs</label>
+                        <input type="text" id="logSearch" class="form-control" placeholder="Search in logs...">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Log Statistics -->
+<div class="row mt-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-bar-chart"></i> Log Statistics
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-2">
+                        <h4 id="totalLines" class="text-primary">0</h4>
+                        <small class="text-muted">Total Lines</small>
+                    </div>
+                    <div class="col-md-2">
+                        <h4 id="errorCount" class="text-danger">0</h4>
+                        <small class="text-muted">Errors</small>
+                    </div>
+                    <div class="col-md-2">
+                        <h4 id="warningCount" class="text-warning">0</h4>
+                        <small class="text-muted">Warnings</small>
+                    </div>
+                    <div class="col-md-2">
+                        <h4 id="infoCount" class="text-info">0</h4>
+                        <small class="text-muted">Info</small>
+                    </div>
+                    <div class="col-md-2">
+                        <h4 id="debugCount" class="text-secondary">0</h4>
+                        <small class="text-muted">Debug</small>
+                    </div>
+                    <div class="col-md-2">
+                        <h4 id="lastUpdate" class="text-muted">--:--</h4>
+                        <small class="text-muted">Last Update</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let refreshInterval;
+let originalLogContent = '';
+
+function updateLogStats(content) {
+    const lines = content.split('\n').filter(line => line.trim() !== '');
+    const errorCount = lines.filter(line => line.includes('ERROR')).length;
+    const warningCount = lines.filter(line => line.includes('WARNING')).length;
+    const infoCount = lines.filter(line => line.includes('INFO')).length;
+    const debugCount = lines.filter(line => line.includes('DEBUG')).length;
+    
+    document.getElementById('totalLines').textContent = lines.length;
+    document.getElementById('errorCount').textContent = errorCount;
+    document.getElementById('warningCount').textContent = warningCount;
+    document.getElementById('infoCount').textContent = infoCount;
+    document.getElementById('debugCount').textContent = debugCount;
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+}
+
+function filterLogs() {
+    const levelFilter = document.getElementById('logLevelFilter').value;
+    const searchTerm = document.getElementById('logSearch').value.toLowerCase();
+    const logContent = document.getElementById('logContent');
+    
+    let lines = originalLogContent.split('\n');
+    
+    // Apply level filter
+    if (levelFilter !== 'all') {
+        lines = lines.filter(line => line.includes(levelFilter));
+    }
+    
+    // Apply search filter
+    if (searchTerm) {
+        lines = lines.filter(line => line.toLowerCase().includes(searchTerm));
+    }
+    
+    logContent.textContent = lines.join('\n');
+    
+    // Auto-scroll if enabled
+    if (document.getElementById('autoScroll').checked) {
+        logContent.scrollTop = logContent.scrollHeight;
+    }
+}
+
+function refreshLogs() {
+    fetch('/logs')
+        .then(response => response.text())
+        .then(html => {
+            // Extract log content from the response
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const logElement = doc.getElementById('logContent');
+            
+            if (logElement) {
+                originalLogContent = logElement.textContent || logElement.innerText || '';
+                updateLogStats(originalLogContent);
+                filterLogs(); // Apply current filters
+            }
+        })
+        .catch(error => {
+            console.error('Error refreshing logs:', error);
+        });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    originalLogContent = document.getElementById('logContent').textContent || '';
+    updateLogStats(originalLogContent);
+    
+    // Auto-scroll to bottom initially
+    const logContent = document.getElementById('logContent');
+    logContent.scrollTop = logContent.scrollHeight;
+    
+    // Refresh button
+    document.getElementById('refreshLogs').addEventListener('click', refreshLogs);
+    
+    // Clear logs button (placeholder - would need backend implementation)
+    document.getElementById('clearLogs').addEventListener('click', function() {
+        if (confirm('Are you sure you want to clear all logs?')) {
+            // This would require a backend endpoint to clear logs
+            alert('Clear logs functionality would require backend implementation');
+        }
+    });
+    
+    // Filter controls
+    document.getElementById('logLevelFilter').addEventListener('change', filterLogs);
+    document.getElementById('logSearch').addEventListener('input', filterLogs);
+    
+    // Auto-refresh every 30 seconds
+    refreshInterval = setInterval(refreshLogs, 30000);
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+    }
+});
+
+// Add syntax highlighting for log levels
+document.addEventListener('DOMContentLoaded', function() {
+    const logContent = document.getElementById('logContent');
+    
+    function highlightLogs() {
+        let html = logContent.textContent;
+        
+        // Highlight different log levels
+        html = html.replace(/ERROR/g, '<span style="color: #dc3545; font-weight: bold;">ERROR</span>');
+        html = html.replace(/WARNING/g, '<span style="color: #ffc107; font-weight: bold;">WARNING</span>');
+        html = html.replace(/INFO/g, '<span style="color: #17a2b8; font-weight: bold;">INFO</span>');
+        html = html.replace(/DEBUG/g, '<span style="color: #6c757d;">DEBUG</span>');
+        
+        // Highlight timestamps (assuming format like 2024-01-01 12:34:56)
+        html = html.replace(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/g, '<span style="color: #28a745;">$1</span>');
+        
+        logContent.innerHTML = html;
+    }
+    
+    // Only apply highlighting if there's content
+    if (originalLogContent && originalLogContent.trim()) {
+        highlightLogs();
+    }
+});
+</script>
+{% endblock %}

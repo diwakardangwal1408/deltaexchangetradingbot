@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "WebFetch(domain:docs.delta.exchange)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(taskkill:*)",
+      "Bash(pip install:*)",
+      "Bash(dir:*)",
+      "Bash(wmic:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(timeout 10 python:*)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:www.delta.exchange)",
+      "Bash(timeout:*)",
+      "Bash(set FLASK_PORT=5001)",
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

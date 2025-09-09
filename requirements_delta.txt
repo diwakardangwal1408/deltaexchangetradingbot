@@ -1,0 +1,13 @@
+requests>=2.28.0
+pandas>=1.5.0
+numpy>=1.24.0
+yfinance>=0.2.0
+asyncio
+datetime
+hashlib
+hmac
+base64
+json
+time
+logging
+getpass

@@ -1,0 +1,1085 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Top Status Bar -->
+<div class="row mb-4">
+    <div class="col-lg-3 col-md-6">
+        <div class="card status-card">
+            <div class="card-body">
+                <h6><i class="bi bi-robot"></i> Bot Status</h6>
+                <div class="status-value text-{{ 'success' if bot_running else 'red' }}" id="botStatusText">
+                    {{ 'Running' if bot_running else 'Stopped' }}
+                </div>
+                <div class="mt-3">
+                    <button id="startBot" class="btn btn-success btn-sm me-2" {{ 'disabled' if bot_running else '' }}>
+                        <i class="bi bi-play-fill"></i> Start
+                    </button>
+                    <button id="stopBot" class="btn btn-danger btn-sm" {{ 'disabled' if not bot_running else '' }}>
+                        <i class="bi bi-stop-fill"></i> Stop
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-3 col-md-6">
+        <div class="card status-card">
+            <div class="card-body">
+                <h6><i class="bi bi-shield-check"></i> Trading Mode</h6>
+                <div class="status-value text-orange">
+                    {{ 'Paper Trading' if config.get('paper_trading', True) else 'Live Trading' }}
+                </div>
+                <div class="status-subtext mt-1">
+                    {{ 'Safe Testing Mode' if config.get('paper_trading', True) else 'Real Money Mode' }}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-3 col-md-6">
+        <div class="card status-card">
+            <div class="card-body">
+                <h6><i class="bi bi-wifi"></i> API Status</h6>
+                <div class="status-value text-{{ 'success' if api_status == 'Connected' else 'red' }}">
+                    {{ api_status }}
+                </div>
+                <div class="status-subtext mt-1">
+                    Delta Exchange
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-3 col-md-6">
+        <div class="card status-card">
+            <div class="card-body">
+                <h6><i class="bi bi-currency-dollar"></i> Daily P&L</h6>
+                <div class="status-value text-{{ 'success' if trading_status.daily_pnl >= 0 else 'red' }}" id="dailyPnl">
+                    ${{ "%.2f"|format(trading_status.daily_pnl) }}
+                </div>
+                <div class="status-subtext mt-1">
+                    Today's Performance
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Main Dashboard Cards -->
+<div class="row mb-4">
+    <!-- Live BTC Price -->
+    <div class="col-lg-4 col-md-12">
+        <div class="card btc-price-card">
+            <div class="card-body text-center">
+                <h6><i class="bi bi-currency-bitcoin"></i> Live BTC Price</h6>
+                <div class="large-value" id="btcPrice">$110,205.98</div>
+                <div class="value-label" id="priceTimestamp">11:52:20 pm</div>
+                <div class="mt-3 d-flex justify-content-between">
+                    <div>
+                        <small>Mode:</small>
+                        <span class="badge bg-light text-dark">Paper</span>
+                    </div>
+                    <div>
+                        <small>Status:</small>
+                        <span class="badge bg-light text-dark">Delta Exchange</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Current Signal -->
+    <div class="col-lg-4 col-md-12">
+        <div class="card signal-card">
+            <div class="card-body text-center">
+                <h6>Trade Analysis</h6>
+                <div class="large-value" id="tradeDecision">No Analysis</div>
+                
+                <!-- Trade Analysis Details -->
+                <div class="mt-3 text-left" style="background-color: rgba(255,255,255,0.1); border-radius: 5px; padding: 10px;">
+                    <div class="d-flex justify-content-between mb-1">
+                        <small><strong>1H Trend:</strong></small>
+                        <span id="trend1h">-</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-1">
+                        <small><strong>1H Score:</strong></small>
+                        <span id="trend1hScore">-</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-1">
+                        <small><strong>3M Score:</strong></small>
+                        <span id="signals3mScore">-</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-1">
+                        <small><strong>Long Threshold:</strong></small>
+                        <span id="longThreshold">5</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-1">
+                        <small><strong>Short Threshold:</strong></small>
+                        <span id="shortThreshold">-7</span>
+                    </div>
+                </div>
+                
+                <!-- Decision Reasoning -->
+                <div class="mt-2">
+                    <small id="decisionReasoning" style="font-size: 11px; line-height: 1.2;">-</small>
+                </div>
+                
+                <div class="value-label mt-3" id="signalTimestamp">Analysis Loading...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Technical Indicators (3-minute timeframe) -->
+    <div class="col-lg-4 col-md-12">
+        <div class="card indicators-card">
+            <div class="card-body">
+                <h6 class="text-center">Technical Indicators (3m)</h6>
+                
+                <!-- Last Candle Info -->
+                <div class="text-center mb-3 p-2" style="background-color: rgba(255,255,255,0.1); border-radius: 5px;">
+                    <small><strong>Last 3m Candle Close:</strong></small><br>
+                    <span id="lastCandleClose" class="text-warning" style="font-size: 16px; font-weight: bold;">--</span>
+                    <br><small class="text-muted" id="lastCandleTime">--</small>
+                </div>
+                
+                <div id="indicatorsContent">
+                    <div class="row mt-3">
+                        <div class="col-6">
+                            <div class="mb-2">
+                                <strong>VWAP:</strong><br>
+                                <span id="vwapValue">--</span>
+                                <small class="d-block text-white-50" id="vwapMeaning">--</small>
+                                <div class="indicator-bar">
+                                    <div class="indicator-fill" id="vwapBar" style="width: 50%"></div>
+                                </div>
+                            </div>
+                            <div class="mb-2">
+                                <strong>Parabolic SAR:</strong><br>
+                                <span id="sarValue">--</span>
+                                <small class="d-block text-white-50" id="sarMeaning">--</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="mb-2">
+                                <strong>ATR %:</strong><br>
+                                <span id="atrPct">--</span>
+                                <small class="d-block text-white-50" id="atrPctMeaning">--</small>
+                            </div>
+                            <div class="mb-2">
+                                <strong>Price Action:</strong><br>
+                                <span id="priceActionValue">--</span>
+                                <small class="d-block text-white-50" id="priceActionMeaning">--</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Signal Scoring System -->
+                    <div class="mt-3 pt-3 border-top border-secondary">
+                        <h6 class="text-center mb-2">Signal Scoring System</h6>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="mb-1">
+                                    <small><strong>VWAP:</strong> <span id="vwapScore">0</span>/5 pts</small>
+                                    <div class="indicator-bar">
+                                        <div class="indicator-fill" id="vwapScoreBar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="mb-1">
+                                    <small><strong>SAR:</strong> <span id="sarScore">0</span>/5 pts</small>
+                                    <div class="indicator-bar">
+                                        <div class="indicator-fill" id="sarScoreBar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="mb-1">
+                                    <small><strong>ATR:</strong> <span id="atrScore">0</span>/5 pts</small>
+                                    <div class="indicator-bar">
+                                        <div class="indicator-fill" id="atrScoreBar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="mb-1">
+                                    <small><strong>Price Action:</strong> <span id="paScore">0</span>/5 pts</small>
+                                    <div class="indicator-bar">
+                                        <div class="indicator-fill" id="paScoreBar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-center mt-2">
+                            <div class="mb-1">
+                                <strong>Total Score: <span id="totalScore">0</span>/20</strong>
+                            </div>
+                            <div class="mb-1">
+                                <small class="text-success">📈 LONG Futures: Total ≥ {{ config.get('futures_strategy', {}).get('long_signal_threshold', 5) }} Points</small><br>
+                                <small class="text-danger">📉 SHORT Futures: Total ≤ {{ config.get('futures_strategy', {}).get('short_signal_threshold', -7) }} Points</small>
+                            </div>
+                            <div id="tradeAction" class="mt-2" style="display: none;">
+                                <div class="alert alert-info mb-0 py-2">
+                                    <strong>🚀 TRADE SIGNAL: <span id="tradeType">--</span></strong><br>
+                                    <small>Action taken on 3m candle close</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="indicatorsError" class="text-center text-danger" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i><br>
+                    <small id="indicatorsErrorMessage">Failed to fetch live data</small>
+                </div>
+                <div class="text-center mt-3">
+                    <small class="text-white-50">
+                        Data Fetched: <span id="indicatorsTimestamp">Never</span><br>
+                        Candle Close: <span id="candleCloseTime">--</span>
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Higher Timeframe Trend Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-graph-up"></i> Higher Timeframe Trend Analysis (1H Candles)
+            </div>
+            <div class="card-body">
+                <div id="trendContent">
+                    <!-- Trend Summary -->
+                    <div class="row mb-4">
+                        <div class="col-md-4 text-center">
+                            <h4>Overall Trend</h4>
+                            <div class="large-value" id="overallTrend">No Trend</div>
+                            <div class="value-label">
+                                Score: <span id="trendScore">0</span>/15
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <h4>Trend Strength</h4>
+                            <div class="medium-value" id="trendStrength">Weak</div>
+                            <div class="indicator-bar">
+                                <div class="indicator-fill" id="trendStrengthBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <h4>Last Candle Close</h4>
+                            <div class="medium-value" id="trendCandeTime">--</div>
+                            <div class="value-label" id="trendTimestamp">Never updated</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Individual Indicators -->
+                    <div class="row">
+                        <div class="col-lg-4 col-md-6">
+                            <div class="card bg-dark border-secondary mb-3">
+                                <div class="card-body">
+                                    <h6><i class="bi bi-activity"></i> Fisher Transform</h6>
+                                    <div class="d-flex justify-content-between">
+                                        <span>Value: <span id="fisherValue">--</span></span>
+                                        <span class="badge" id="fisherScore">0/3</span>
+                                    </div>
+                                    <small class="text-muted d-block" id="fisherMeaning">--</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-lg-4 col-md-6">
+                            <div class="card bg-dark border-secondary mb-3">
+                                <div class="card-body">
+                                    <h6><i class="bi bi-speedometer"></i> True Strength Index</h6>
+                                    <div class="d-flex justify-content-between">
+                                        <span>Value: <span id="tsiValue">--</span></span>
+                                        <span class="badge" id="tsiScore">0/3</span>
+                                    </div>
+                                    <small class="text-muted d-block" id="tsiMeaning">--</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-lg-4 col-md-6">
+                            <div class="card bg-dark border-secondary mb-3">
+                                <div class="card-body">
+                                    <h6><i class="bi bi-diamond"></i> Pivot Points</h6>
+                                    <div class="d-flex justify-content-between">
+                                        <span>Position: <span id="pivotPosition">--</span></span>
+                                        <span class="badge" id="pivotScore">0/3</span>
+                                    </div>
+                                    <small class="text-muted d-block" id="pivotMeaning">--</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-lg-4 col-md-6">
+                            <div class="card bg-dark border-secondary mb-3">
+                                <div class="card-body">
+                                    <h6><i class="bi bi-bar-chart-steps"></i> Dow Theory</h6>
+                                    <div class="d-flex justify-content-between">
+                                        <span>Signal: <span id="dowSignal">--</span></span>
+                                        <span class="badge" id="dowScore">0/3</span>
+                                    </div>
+                                    <small class="text-muted d-block" id="dowMeaning">--</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-lg-4 col-md-6">
+                            <div class="card bg-dark border-secondary mb-3">
+                                <div class="card-body">
+                                    <h6><i class="bi bi-bezier2"></i> Williams Alligator</h6>
+                                    <div class="d-flex justify-content-between">
+                                        <span>State: <span id="alligatorState">--</span></span>
+                                        <span class="badge" id="alligatorScore">0/3</span>
+                                    </div>
+                                    <small class="text-muted d-block" id="alligatorMeaning">--</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-lg-4 col-md-6">
+                            <div class="card bg-dark border-secondary mb-3">
+                                <div class="card-body text-center">
+                                    <h6><i class="bi bi-arrow-clockwise"></i> Update Control</h6>
+                                    <button id="refreshTrendAnalysis" class="btn btn-outline-light btn-sm">
+                                        <i class="bi bi-arrow-clockwise"></i> Refresh 1H Data
+                                    </button>
+                                    <small class="text-muted d-block mt-2">
+                                        Next update: <span id="nextTrendUpdate">--</span>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="trendError" class="text-center text-danger" style="display: none;">
+                    <i class="bi bi-exclamation-triangle"></i><br>
+                    <small id="trendErrorMessage">Failed to fetch trend data</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bottom Section -->
+<div class="row">
+    <!-- Portfolio Overview -->
+    <div class="col-lg-8 col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-briefcase"></i> Portfolio Overview
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Account Balance</h6>
+                        <div class="mb-2" id="balanceSection">
+                            <div class="text-center">
+                                <small class="text-muted">Loading balance...</small>
+                            </div>
+                        </div>
+                        <div class="mb-2" id="balanceError" style="display: none;">
+                            <small class="text-danger">
+                                <i class="bi bi-exclamation-triangle"></i> 
+                                <span id="balanceErrorMessage">Failed to load balance</span>
+                            </small>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Portfolio Settings</h6>
+                        <div class="mb-2">
+                            <strong>Portfolio Size:</strong> 
+                            <span>${{ "{:,.0f}".format(config.get('portfolio_size', 100000)) }}</span>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Position Size:</strong> 
+                            <span>${{ "{:,.0f}".format(config.get('position_size_usd', 500)) }}</span>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Max Daily Loss:</strong> 
+                            <span class="text-red">${{ "{:,.0f}".format(config.get('max_daily_loss', 2000)) }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Active Positions -->
+    <div class="col-lg-4 col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-list-check"></i> Active Positions (<span id="positionCount">{{ trading_status.current_positions }}</span>)
+            </div>
+            <div class="card-body">
+                <div id="positionsList">
+                    <div class="text-center text-muted">
+                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                        <div>Loading positions...</div>
+                    </div>
+                </div>
+                
+                <div class="mt-3 text-center">
+                    <div class="large-value text-blue" id="totalTrades">{{ trading_status.total_trades }}</div>
+                    <div class="value-label">Total Trades</div>
+                </div>
+                
+                <div class="mt-3 text-center">
+                    <button id="refreshData" class="btn btn-outline-light btn-sm">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let statusInterval;
+
+function updateStatus() {
+    fetch('/api/status')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('positionCount').textContent = data.current_positions;
+            document.getElementById('dailyPnl').textContent = '$' + data.daily_pnl.toFixed(2);
+            document.getElementById('totalTrades').textContent = data.total_trades;
+            
+            // Update bot status
+            const isRunning = data.bot_running;
+            document.getElementById('startBot').disabled = isRunning;
+            document.getElementById('stopBot').disabled = !isRunning;
+            document.getElementById('botStatusText').textContent = isRunning ? 'Running' : 'Stopped';
+            document.getElementById('botStatusText').className = isRunning ? 'status-value text-success' : 'status-value text-red';
+            
+            // Update navbar badge
+            const navBadge = document.getElementById('botStatusBadge');
+            if (navBadge) {
+                navBadge.textContent = isRunning ? 'Running' : 'Stopped';
+                navBadge.className = isRunning ? 'status-badge running' : 'status-badge stopped';
+            }
+        })
+        .catch(error => console.error('Error updating status:', error));
+}
+
+function updatePositions() {
+    fetch('/api/positions')
+        .then(response => response.json())
+        .then(data => {
+            const positionsList = document.getElementById('positionsList');
+            
+            if (data.success && data.positions.length > 0) {
+                let html = '';
+                data.positions.forEach(position => {
+                    const pnlColor = position.unrealized_pnl >= 0 ? 'text-success' : 'text-danger';
+                    const sideColor = position.side === 'Long' ? 'success' : 'danger';
+                    
+                    html += `
+                        <div class="position-item mb-2 p-2" style="background: rgba(255,255,255,0.05); border-radius: 5px; border-left: 3px solid ${position.side === 'Long' ? '#198754' : '#dc3545'};">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>${position.symbol}</strong>
+                                    <span class="badge bg-${sideColor} ms-2">${position.side}</span>
+                                    <br><small class="text-muted">${position.strategy}</small>
+                                </div>
+                                <div class="text-end">
+                                    <div class="${pnlColor}">$${position.unrealized_pnl.toFixed(2)}</div>
+                                    <small class="text-muted">Size: ${position.size}</small>
+                                </div>
+                            </div>
+                            <div class="mt-1">
+                                <div class="row">
+                                    <div class="col-6">
+                                        <small><strong>Entry:</strong> $${position.entry_price.toFixed(2)}</small>
+                                    </div>
+                                    <div class="col-6">
+                                        <small><strong>Mark:</strong> $${position.mark_price.toFixed(2)}</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                positionsList.innerHTML = html;
+            } else if (data.success && data.positions.length === 0) {
+                positionsList.innerHTML = '<div class="text-center text-muted">No active positions</div>';
+            } else {
+                positionsList.innerHTML = '<div class="text-center text-danger">Error loading positions</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error updating positions:', error);
+            document.getElementById('positionsList').innerHTML = '<div class="text-center text-danger">Connection error</div>';
+        });
+}
+
+function updateBtcPrice() {
+    fetch('/api/btc_price')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('btcPrice').textContent = '$' + data.price.toLocaleString();
+                document.getElementById('priceTimestamp').textContent = new Date(data.timestamp).toLocaleString();
+            } else {
+                document.getElementById('btcPrice').textContent = 'API Error';
+                document.getElementById('priceTimestamp').textContent = data.message;
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching BTC price:', error);
+            document.getElementById('btcPrice').textContent = 'Connection Error';
+            document.getElementById('priceTimestamp').textContent = 'Network error';
+        });
+}
+
+function updateWalletBalance() {
+    fetch('/api/wallet')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Hide error, show balance
+                document.getElementById('balanceError').style.display = 'none';
+                document.getElementById('balanceSection').style.display = 'block';
+                
+                // Update balance display with INR conversion
+                let balanceHTML = '';
+                if (data.balances && Array.isArray(data.balances) && data.balances.length > 0) {
+                    data.balances.forEach(balance => {
+                        const currency = balance.currency;
+                        const balanceUSD = parseFloat(balance.balance_usd);
+                        const balanceINR = parseFloat(balance.balance_inr);
+                        const availableUSD = parseFloat(balance.available_usd);
+                        const availableINR = parseFloat(balance.available_inr);
+                        
+                        // Show all assets with balance > 0.01 USD
+                        if (balanceUSD > 0.01) {
+                            const colorClass = ['USDT', 'USD'].includes(currency) ? 'text-success' : 
+                                             currency === 'BTC' ? 'text-warning' : 'text-info';
+                            
+                            balanceHTML += `
+                                <div class="mb-2 p-2 border rounded">
+                                    <div class="d-flex justify-content-between">
+                                        <span><strong>${currency}:</strong></span>
+                                        <div class="text-end">
+                                            <div class="${colorClass}"><strong>₹${balanceINR.toFixed(0)}</strong></div>
+                                            <small class="text-muted">$${balanceUSD.toFixed(2)}</small>
+                                        </div>
+                                    </div>
+                                    ${Math.abs(balanceUSD - availableUSD) > 0.01 ? `
+                                    <div class="d-flex justify-content-between mt-1">
+                                        <small class="text-muted">Available:</small>
+                                        <div class="text-end">
+                                            <small class="text-success">₹${availableINR.toFixed(0)}</small>
+                                            <br><small class="text-muted">$${availableUSD.toFixed(2)}</small>
+                                        </div>
+                                    </div>
+                                    ` : ''}
+                                </div>
+                            `;
+                        }
+                    });
+                }
+                
+                if (balanceHTML) {
+                    document.getElementById('balanceSection').innerHTML = balanceHTML;
+                } else {
+                    document.getElementById('balanceSection').innerHTML = '<small class="text-muted">No balances found</small>';
+                }
+            } else {
+                // Show error, hide balance
+                document.getElementById('balanceSection').style.display = 'none';
+                document.getElementById('balanceError').style.display = 'block';
+                document.getElementById('balanceErrorMessage').textContent = data.error || 'Failed to fetch balance';
+            }
+        })
+        .catch(error => {
+            // Show network error
+            document.getElementById('balanceSection').style.display = 'none';
+            document.getElementById('balanceError').style.display = 'block';
+            document.getElementById('balanceErrorMessage').textContent = 'Network connection failed';
+            console.error('Error fetching wallet balance:', error);
+        });
+}
+
+// Helper functions to interpret new technical indicators
+function getVWAPMeaning(current_price, vwap, deviation) {
+    if (Math.abs(deviation) < 0.1) return 'Price at fair value';
+    if (deviation > 1.0) return 'Price significantly above VWAP (selling pressure expected)';
+    if (deviation < -1.0) return 'Price significantly below VWAP (buying opportunity)';
+    if (deviation > 0) return 'Price above VWAP (bullish)';
+    return 'Price below VWAP (bearish)';
+}
+
+function getSARMeaning(current_price, sar, trend) {
+    if (trend === 1) {
+        return current_price > sar ? 'Uptrend confirmed' : 'Potential trend reversal';
+    } else if (trend === -1) {
+        return current_price < sar ? 'Downtrend confirmed' : 'Potential trend reversal';
+    }
+    return 'Trend uncertain';
+}
+
+function getATRMeaning(atr) {
+    if (atr > 2.0) return 'High volatility - larger price moves expected';
+    if (atr < 0.5) return 'Low volatility - smaller price moves expected';
+    if (atr > 1.0) return 'Moderate-high volatility';
+    return 'Normal volatility levels';
+}
+
+function getPriceActionMeaning(trend) {
+    if (trend === 1) return 'Higher highs and higher lows - bullish structure';
+    if (trend === -1) return 'Lower highs and lower lows - bearish structure';
+    return 'Sideways/consolidation - no clear trend';
+}
+
+function updateHigherTimeframeTrend() {
+    fetch('/api/higher_timeframe_trend')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Show trend content, hide error
+                document.getElementById('trendContent').style.display = 'block';
+                document.getElementById('trendError').style.display = 'none';
+                
+                // Update overall trend summary
+                document.getElementById('overallTrend').textContent = data.overall_trend;
+                document.getElementById('trendScore').textContent = data.total_score;
+                document.getElementById('trendStrength').textContent = data.trend_strength;
+                
+                // Update trend strength bar
+                const strengthPercent = Math.abs(data.total_score) / data.max_score * 100;
+                document.getElementById('trendStrengthBar').style.width = strengthPercent + '%';
+                
+                // Color code the trend based on direction
+                const trendElement = document.getElementById('overallTrend');
+                if (data.overall_trend.includes('Bullish')) {
+                    trendElement.className = 'large-value text-success';
+                } else if (data.overall_trend.includes('Bearish')) {
+                    trendElement.className = 'large-value text-danger';
+                } else {
+                    trendElement.className = 'large-value text-warning';
+                }
+                
+                // Update timestamps
+                document.getElementById('trendCandeTime').textContent = new Date(data.candle_close_time).toLocaleString();
+                document.getElementById('trendTimestamp').textContent = new Date(data.timestamp).toLocaleString();
+                
+                // Update individual indicators
+                const indicators = data.indicators;
+                
+                // Fisher Transform
+                if (indicators.fisher.value !== null) {
+                    document.getElementById('fisherValue').textContent = indicators.fisher.value.toFixed(3);
+                    document.getElementById('fisherMeaning').textContent = indicators.fisher.meaning;
+                    updateScoreBadge('fisherScore', indicators.fisher.score);
+                } else {
+                    document.getElementById('fisherValue').textContent = 'N/A';
+                    document.getElementById('fisherMeaning').textContent = 'Data unavailable';
+                    updateScoreBadge('fisherScore', 0);
+                }
+                
+                // True Strength Index
+                if (indicators.tsi.value !== null) {
+                    document.getElementById('tsiValue').textContent = indicators.tsi.value.toFixed(2);
+                    document.getElementById('tsiMeaning').textContent = indicators.tsi.meaning;
+                    updateScoreBadge('tsiScore', indicators.tsi.score);
+                } else {
+                    document.getElementById('tsiValue').textContent = 'N/A';
+                    document.getElementById('tsiMeaning').textContent = 'Data unavailable';
+                    updateScoreBadge('tsiScore', 0);
+                }
+                
+                // Pivot Points
+                document.getElementById('pivotPosition').textContent = indicators.pivot.position;
+                document.getElementById('pivotMeaning').textContent = indicators.pivot.meaning;
+                updateScoreBadge('pivotScore', indicators.pivot.score);
+                
+                // Dow Theory
+                document.getElementById('dowSignal').textContent = indicators.dow.signal;
+                document.getElementById('dowMeaning').textContent = indicators.dow.meaning;
+                updateScoreBadge('dowScore', indicators.dow.score);
+                
+                // Williams Alligator
+                document.getElementById('alligatorState').textContent = indicators.alligator.state;
+                document.getElementById('alligatorMeaning').textContent = indicators.alligator.meaning;
+                updateScoreBadge('alligatorScore', indicators.alligator.score);
+                
+                // Calculate next update time (next hour)
+                const nextHour = new Date();
+                nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+                document.getElementById('nextTrendUpdate').textContent = nextHour.toLocaleString();
+                
+            } else {
+                // Show error, hide trend content
+                document.getElementById('trendContent').style.display = 'none';
+                document.getElementById('trendError').style.display = 'block';
+                document.getElementById('trendErrorMessage').textContent = data.message;
+                
+                console.error('Higher timeframe trend error:', data.message);
+            }
+        })
+        .catch(error => {
+            // Show network error
+            document.getElementById('trendContent').style.display = 'none';
+            document.getElementById('trendError').style.display = 'block';
+            document.getElementById('trendErrorMessage').textContent = 'Network connection failed';
+            
+            console.error('Network error fetching trend data:', error);
+        });
+}
+
+function updateScoreBadge(elementId, score) {
+    const element = document.getElementById(elementId);
+    element.textContent = score + '/3';
+    
+    // Color code the badge based on score
+    element.className = 'badge ';
+    if (score >= 2) {
+        element.className += 'bg-success';
+    } else if (score >= 1) {
+        element.className += 'bg-warning';
+    } else if (score <= -2) {
+        element.className += 'bg-danger';
+    } else if (score <= -1) {
+        element.className += 'bg-warning';
+    } else {
+        element.className += 'bg-secondary';
+    }
+}
+
+function updateTechnicalIndicators() {
+    fetch('/api/signal_data')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Show indicators content, hide error
+                document.getElementById('indicatorsContent').style.display = 'block';
+                document.getElementById('indicatorsError').style.display = 'none';
+                
+                // Update last candle close info
+                const indicators = data.indicators;
+                if (indicators.candle_close_price !== null) {
+                    document.getElementById('lastCandleClose').textContent = '$' + indicators.candle_close_price.toFixed(2);
+                } else {
+                    document.getElementById('lastCandleClose').textContent = '--';
+                }
+                
+                // Update candle close time
+                if (data.candle_close_time) {
+                    const closeTime = new Date(data.candle_close_time);
+                    document.getElementById('lastCandleTime').textContent = 
+                        closeTime.toLocaleTimeString('en-US', { 
+                            hour12: false, 
+                            hour: '2-digit', 
+                            minute: '2-digit',
+                            second: '2-digit'
+                        });
+                } else {
+                    document.getElementById('lastCandleTime').textContent = '--';
+                }
+                
+                // Update technical indicators with null checks
+                
+                // VWAP
+                if (indicators.vwap !== null && indicators.current_price !== null) {
+                    document.getElementById('vwapValue').textContent = '$' + indicators.vwap.toFixed(0);
+                    document.getElementById('vwapMeaning').textContent = getVWAPMeaning(indicators.current_price, indicators.vwap, indicators.vwap_deviation);
+                    
+                    // VWAP bar shows price position relative to VWAP (centered at 50%)
+                    const vwapBarPosition = Math.min(Math.max((indicators.vwap_deviation + 2) * 25, 0), 100); // Scale -2% to +2% to 0-100%
+                    document.getElementById('vwapBar').style.width = vwapBarPosition + '%';
+                } else {
+                    document.getElementById('vwapValue').textContent = 'N/A';
+                    document.getElementById('vwapMeaning').textContent = '--';
+                    document.getElementById('vwapBar').style.width = '50%';
+                }
+                
+                // Parabolic SAR
+                if (indicators.parabolic_sar !== null && indicators.current_price !== null) {
+                    document.getElementById('sarValue').textContent = '$' + indicators.parabolic_sar.toFixed(0);
+                    document.getElementById('sarMeaning').textContent = getSARMeaning(indicators.current_price, indicators.parabolic_sar, indicators.sar_trend);
+                } else {
+                    document.getElementById('sarValue').textContent = 'N/A';
+                    document.getElementById('sarMeaning').textContent = '--';
+                }
+                
+                // ATR
+                if (indicators.atr_pct !== null) {
+                    document.getElementById('atrPct').textContent = indicators.atr_pct.toFixed(2) + '%';
+                    document.getElementById('atrPctMeaning').textContent = getATRMeaning(indicators.atr_pct);
+                } else {
+                    document.getElementById('atrPct').textContent = 'N/A';
+                    document.getElementById('atrPctMeaning').textContent = '--';
+                }
+                
+                // Price Action
+                const trendNames = {1: 'Bullish', '-1': 'Bearish', 0: 'Neutral'};
+                const priceActionTrend = indicators.price_action_trend || 0;
+                document.getElementById('priceActionValue').textContent = trendNames[priceActionTrend] || 'Unknown';
+                document.getElementById('priceActionMeaning').textContent = getPriceActionMeaning(priceActionTrend);
+                
+                // Update scoring system
+                const scoring = data.scoring;
+                if (scoring) {
+                    document.getElementById('vwapScore').textContent = scoring.vwap_score;
+                    document.getElementById('sarScore').textContent = scoring.sar_score;
+                    document.getElementById('atrScore').textContent = scoring.atr_score;
+                    document.getElementById('paScore').textContent = scoring.pa_score;
+                    document.getElementById('totalScore').textContent = scoring.total_score;
+                    
+                    // Update score bars (convert scores to percentage for visual bars)
+                    const updateScoreBar = (elementId, score, maxScore = 5) => {
+                        const percentage = (Math.abs(score) / maxScore) * 100;
+                        const element = document.getElementById(elementId);
+                        element.style.width = percentage + '%';
+                        element.className = 'indicator-fill ' + (score > 0 ? 'bg-success' : score < 0 ? 'bg-danger' : 'bg-secondary');
+                    };
+                    
+                    updateScoreBar('vwapScoreBar', scoring.vwap_score);
+                    updateScoreBar('sarScoreBar', scoring.sar_score);
+                    updateScoreBar('atrScoreBar', scoring.atr_score);
+                    updateScoreBar('paScoreBar', scoring.pa_score);
+                    
+                    // Show/hide trade action alert
+                    const tradeActionDiv = document.getElementById('tradeAction');
+                    const tradeTypeSpan = document.getElementById('tradeType');
+                    
+                    // Check for bullish futures signal
+                    if (scoring.total_score >= scoring.bullish_threshold) {
+                        tradeActionDiv.style.display = 'block';
+                        tradeTypeSpan.textContent = 'BUY BTC FUTURES (LONG)';
+                        tradeActionDiv.querySelector('.alert').className = 'alert alert-success mb-0 py-2';
+                    }
+                    // Check for bearish futures signal  
+                    else if (scoring.total_score <= scoring.bearish_threshold) {
+                        tradeActionDiv.style.display = 'block';
+                        tradeTypeSpan.textContent = 'SELL BTC FUTURES (SHORT)';
+                        tradeActionDiv.querySelector('.alert').className = 'alert alert-danger mb-0 py-2';
+                    }
+                    // No signal
+                    else {
+                        tradeActionDiv.style.display = 'none';
+                    }
+                }
+                
+                // Update trade analysis display
+                if (data.trade_analysis) {
+                    const analysis = data.trade_analysis;
+                    
+                    // Update trade decision
+                    let decisionText = analysis.trade_decision || 'NO_ANALYSIS';
+                    let decisionClass = 'text-muted';
+                    
+                    if (decisionText === 'LONG_FUTURES') {
+                        decisionClass = 'text-success';
+                        decisionText = '✅ LONG FUTURES';
+                    } else if (decisionText === 'SHORT_FUTURES') {
+                        decisionClass = 'text-danger';
+                        decisionText = '✅ SHORT FUTURES';
+                    } else if (decisionText === 'NEUTRAL_STRATEGY') {
+                        decisionClass = 'text-warning';
+                        decisionText = '✅ NEUTRAL STRATEGY';
+                    } else {
+                        decisionClass = 'text-secondary';
+                        decisionText = '❌ NO TRADE';
+                    }
+                    
+                    const decisionElement = document.getElementById('tradeDecision');
+                    decisionElement.textContent = decisionText;
+                    decisionElement.className = 'large-value ' + decisionClass;
+                    
+                    // Update analysis details
+                    document.getElementById('trend1h').textContent = analysis['1h_trend'] || '-';
+                    document.getElementById('trend1hScore').textContent = analysis['1h_trend_score'] || '-';
+                    document.getElementById('signals3mScore').textContent = analysis['3m_total_score'] || '-';
+                    document.getElementById('longThreshold').textContent = analysis['3m_long_threshold'] || '5';
+                    document.getElementById('shortThreshold').textContent = analysis['3m_short_threshold'] || '-7';
+                    
+                    // Update decision reasoning
+                    document.getElementById('decisionReasoning').textContent = analysis.decision_reasoning || 'No reasoning available';
+                } else {
+                    // Fallback for old API response format
+                    let signalText = 'No Signal';
+                    let signalClass = 'text-muted';
+                    
+                    if (data.entry_type === 'STRANGLE_SELL') {
+                        signalText = 'SELL STRANGLE';
+                        signalClass = 'text-warning';
+                    } else if (data.current_signal > 0) {
+                        signalText = 'LONG FUTURES';
+                        signalClass = 'text-success';
+                    } else if (data.current_signal < 0) {
+                        signalText = 'SHORT FUTURES';
+                        signalClass = 'text-danger';
+                    }
+                    
+                    const decisionElement = document.getElementById('tradeDecision');
+                    decisionElement.textContent = signalText;
+                    decisionElement.className = 'large-value ' + signalClass;
+                }
+                
+                // Update timestamps
+                const timestampText = data.candle_close_time ? 
+                    new Date(data.candle_close_time).toLocaleString() + ' (3m candle)' :
+                    new Date(data.timestamp).toLocaleString();
+                document.getElementById('signalTimestamp').textContent = timestampText;
+                document.getElementById('indicatorsTimestamp').textContent = new Date(data.timestamp).toLocaleString();
+                
+                // Update candle close time separately
+                if (data.candle_close_time) {
+                    document.getElementById('candleCloseTime').textContent = new Date(data.candle_close_time).toLocaleString();
+                }
+                
+            } else {
+                // Show error, hide indicators content
+                document.getElementById('indicatorsContent').style.display = 'none';
+                document.getElementById('indicatorsError').style.display = 'block';
+                document.getElementById('indicatorsErrorMessage').textContent = data.message;
+                document.getElementById('indicatorsTimestamp').textContent = 'Error at ' + new Date(data.timestamp).toLocaleString();
+                
+                // Reset all indicator meanings to show error state
+                const meaningElements = ['vwapMeaning', 'sarMeaning', 'atrPctMeaning', 'priceActionMeaning'];
+                meaningElements.forEach(id => {
+                    const element = document.getElementById(id);
+                    if (element) element.textContent = 'Data unavailable';
+                });
+                
+                // Also show error in trade analysis section
+                document.getElementById('tradeDecision').textContent = 'Data Error';
+                document.getElementById('decisionReasoning').textContent = 'Unable to analyze trade conditions';
+                document.getElementById('signalTimestamp').textContent = 'No live data available';
+                document.getElementById('candleCloseTime').textContent = '--';
+                
+                console.error('Technical indicators error:', data.message);
+            }
+        })
+        .catch(error => {
+            // Show network error
+            document.getElementById('indicatorsContent').style.display = 'none';
+            document.getElementById('indicatorsError').style.display = 'block';
+            document.getElementById('indicatorsErrorMessage').textContent = 'Network connection failed';
+            document.getElementById('indicatorsTimestamp').textContent = 'Connection error at ' + new Date().toLocaleString();
+            
+            // Also show error in trade analysis section
+            document.getElementById('tradeDecision').textContent = 'Connection Error';
+            document.getElementById('decisionReasoning').textContent = 'Network connection failed';
+            document.getElementById('signalTimestamp').textContent = 'Network error';
+            document.getElementById('candleCloseTime').textContent = '--';
+            
+            console.error('Network error fetching technical indicators:', error);
+        });
+}
+
+// Function to calculate milliseconds until next 3-minute interval
+function msUntilNext3MinInterval() {
+    const now = new Date();
+    const minutes = now.getMinutes();
+    const seconds = now.getSeconds();
+    const milliseconds = now.getMilliseconds();
+    
+    // Calculate minutes until next 3-minute mark (0, 3, 6, 9, etc.)
+    const minutesUntilNext3 = 3 - (minutes % 3);
+    const msUntilNext = (minutesUntilNext3 * 60 * 1000) - (seconds * 1000) - milliseconds;
+    
+    return msUntilNext;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Initial load
+    updateStatus();
+    updateBtcPrice();
+    updateWalletBalance();
+    updatePositions();
+    updateTechnicalIndicators();
+    updateHigherTimeframeTrend();
+    
+    // Status refresh every 30 seconds
+    statusInterval = setInterval(function() {
+        updateStatus();
+        updatePositions();
+    }, 30000);
+    
+    // BTC price refresh every 10 seconds
+    setInterval(updateBtcPrice, 10000);
+    
+    // Wallet balance refresh every 60 seconds
+    setInterval(updateWalletBalance, 60000);
+    
+    // Higher timeframe trend refresh every hour (on the hour)
+    setInterval(updateHigherTimeframeTrend, 3600000);
+    
+    // Technical indicators: First immediate load, then sync with 3-minute candle closes
+    // This prevents showing connection error on initial page load
+    
+    // Immediate update on page load so users don't see "connection error"
+    setTimeout(() => updateTechnicalIndicators(), 2000);
+    
+    // Then wait until next 3-minute candle close for synced updates
+    const initialDelay = msUntilNext3MinInterval();
+    console.log(`Technical indicators will sync with 3-minute candle closes in ${(initialDelay / 1000).toFixed(0)} seconds`);
+    
+    setTimeout(function() {
+        // Update at candle close
+        updateTechnicalIndicators();
+        
+        // Then update every 3 minutes (180000ms) at each candle close
+        setInterval(function() {
+            console.log('3-minute candle closed - updating technical indicators');
+            updateTechnicalIndicators();
+        }, 180000); // 3 minutes = 180000ms
+        
+    }, initialDelay);
+    
+    // Bot control buttons
+    document.getElementById('startBot').addEventListener('click', function() {
+        fetch('/start_bot', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Trading bot started successfully!');
+                    updateStatus();
+                } else {
+                    alert('Error starting bot: ' + data.message);
+                }
+            });
+    });
+    
+    document.getElementById('stopBot').addEventListener('click', function() {
+        fetch('/stop_bot', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Trading bot stop signal sent!');
+                    updateStatus();
+                } else {
+                    alert('Error stopping bot: ' + data.message);
+                }
+            });
+    });
+    
+    // Refresh button
+    document.getElementById('refreshData').addEventListener('click', function() {
+        updateStatus();
+        updateBtcPrice();
+        updateWalletBalance();
+        updatePositions();
+        updateTechnicalIndicators();
+    });
+    
+    // Trend refresh button
+    document.getElementById('refreshTrendAnalysis').addEventListener('click', function() {
+        updateHigherTimeframeTrend();
+    });
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (statusInterval) {
+        clearInterval(statusInterval);
+    }
+});
+</script>
+{% endblock %}

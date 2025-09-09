@@ -1,0 +1,465 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2><i class="bi bi-gear"></i> Trading Bot Settings</h2>
+        <p class="text-muted">Configure your trading bot parameters and API credentials.</p>
+    </div>
+</div>
+
+<form method="POST" action="/save_settings">
+    <!-- API Configuration -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-key"></i> API Configuration
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="api_key" class="form-label">API Key</label>
+                        <input type="text" class="form-control" id="api_key" name="api_key" 
+                               value="{{ config.get('api_key', '') }}" placeholder="Enter your Delta Exchange API key">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="api_secret" class="form-label">API Secret</label>
+                        <input type="password" class="form-control" id="api_secret" name="api_secret" 
+                               value="{{ config.get('api_secret', '') }}" placeholder="Enter your API secret">
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="paper_trading" name="paper_trading" 
+                               {{ 'checked' if config.get('paper_trading', True) else '' }}>
+                        <label class="form-check-label" for="paper_trading">
+                            Paper Trading Mode (Recommended for testing)
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <button type="button" id="testApi" class="btn btn-outline-primary">
+                        <i class="bi bi-check-circle"></i> Test API Connection
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Portfolio Settings -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-wallet2"></i> Portfolio Settings
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="portfolio_size" class="form-label">Portfolio Size (USD)</label>
+                        <input type="number" class="form-control" id="portfolio_size" name="portfolio_size" 
+                               value="{{ config.get('portfolio_size', 100000) }}" min="1000" step="1000">
+                        <div class="form-text">Total portfolio value in USD</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="position_size_usd" class="form-label">Position Size (USD)</label>
+                        <input type="number" class="form-control" id="position_size_usd" name="position_size_usd" 
+                               value="{{ config.get('position_size_usd', 500) }}" min="10" step="10">
+                        <div class="form-text">Amount to risk per trade</div>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="max_daily_loss" class="form-label">Max Daily Loss (USD)</label>
+                        <input type="number" class="form-control" id="max_daily_loss" name="max_daily_loss" 
+                               value="{{ config.get('max_daily_loss', 2000) }}" min="100" step="100">
+                        <div class="form-text">Bot stops trading if daily loss exceeds this amount</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="max_positions" class="form-label">Max Positions</label>
+                        <input type="number" class="form-control" id="max_positions" name="max_positions" 
+                               value="{{ config.get('max_positions', 2) }}" min="1" max="10">
+                        <div class="form-text">Maximum number of concurrent positions</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Risk Management -->
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center">
+            <i class="bi bi-currency-dollar me-2"></i> 
+            Risk Management
+            <div class="form-check form-switch ms-auto">
+                <input class="form-check-input" type="checkbox" id="dollar_based_enabled" name="dollar_based_enabled" 
+                       {{ 'checked' if config.get('dollar_based_risk', {}).get('enabled', false) else '' }}>
+                <label class="form-check-label" for="dollar_based_enabled">
+                    Enable Dollar-Based Risk
+                </label>
+            </div>
+        </div>
+        <div class="card-body" id="dollar_risk_settings" style="{{ 'display: block;' if config.get('dollar_based_risk', {}).get('enabled', false) else 'display: none;' }}">
+            <div class="alert alert-info mb-3">
+                <i class="bi bi-info-circle"></i>
+                <strong>Dollar-Based Mode:</strong> All risk management values are in absolute dollar amounts instead of percentages.
+            </div>
+            
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="dollar_stop_loss" class="form-label">Stop Loss ($)</label>
+                        <input type="number" class="form-control" id="dollar_stop_loss" name="dollar_stop_loss" 
+                               value="{{ config.get('dollar_based_risk', {}).get('stop_loss_usd', 100) }}" 
+                               min="10" max="10000" step="5">
+                        <div class="form-text">Maximum loss per trade in USD</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="dollar_take_profit" class="form-label">Take Profit ($)</label>
+                        <input type="number" class="form-control" id="dollar_take_profit" name="dollar_take_profit" 
+                               value="{{ config.get('dollar_based_risk', {}).get('take_profit_usd', 200) }}" 
+                               min="20" max="20000" step="10">
+                        <div class="form-text">Profit target per trade in USD</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="dollar_trailing_stop" class="form-label">Trailing Stop ($)</label>
+                        <input type="number" class="form-control" id="dollar_trailing_stop" name="dollar_trailing_stop" 
+                               value="{{ config.get('dollar_based_risk', {}).get('trailing_stop_usd', 50) }}" 
+                               min="5" max="1000" step="5">
+                        <div class="form-text">Trailing stop distance in USD</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="dollar_quick_profit" class="form-label">Quick Profit ($)</label>
+                        <input type="number" class="form-control" id="dollar_quick_profit" name="dollar_quick_profit" 
+                               value="{{ config.get('dollar_based_risk', {}).get('quick_profit_usd', 60) }}" 
+                               min="10" max="5000" step="5">
+                        <div class="form-text">Quick profit target in USD</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="dollar_max_risk" class="form-label">Max Risk Per Trade ($)</label>
+                        <input type="number" class="form-control" id="dollar_max_risk" name="dollar_max_risk" 
+                               value="{{ config.get('dollar_based_risk', {}).get('max_risk_usd', 150) }}" 
+                               min="25" max="5000" step="25">
+                        <div class="form-text">Maximum amount to risk per trade</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="dollar_daily_loss_limit" class="form-label">Daily Loss Limit ($)</label>
+                        <input type="number" class="form-control" id="dollar_daily_loss_limit" name="dollar_daily_loss_limit" 
+                               value="{{ config.get('dollar_based_risk', {}).get('daily_loss_limit_usd', 500) }}" 
+                               min="100" max="10000" step="50">
+                        <div class="form-text">Maximum daily loss before stopping</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- BTC Futures Trading Configuration -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-graph-up-arrow"></i> BTC Futures Trading
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i>
+                <strong>Futures Trading:</strong> Long/Short BTC perpetual futures based on 3-minute signals with 1-hour trend alignment.
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="futures_long_threshold" class="form-label">LONG Futures Signal Threshold</label>
+                        <input type="number" class="form-control" id="futures_long_threshold" name="futures_long_threshold" 
+                               value="{{ config.get('futures_strategy', {}).get('long_signal_threshold', 5) }}" 
+                               min="1" max="20" step="1">
+                        <div class="form-text">Minimum score to trigger LONG futures position (1-20 range)</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="futures_short_threshold" class="form-label">SHORT Futures Signal Threshold</label>
+                        <input type="number" class="form-control" id="futures_short_threshold" name="futures_short_threshold" 
+                               value="{{ config.get('futures_strategy', {}).get('short_signal_threshold', -7) }}" 
+                               min="-20" max="-1" step="1">
+                        <div class="form-text">Maximum score to trigger SHORT futures position (-20 to -1 range)</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="futures_leverage" class="form-label">Leverage</label>
+                        <input type="number" class="form-control" id="futures_leverage" name="futures_leverage" 
+                               value="{{ config.get('futures_strategy', {}).get('leverage', 10) }}" 
+                               min="1" max="25" step="1">
+                        <div class="form-text">Leverage multiplier for futures positions</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="futures_position_size_usd" class="form-label">Position Size (USD)</label>
+                        <input type="number" class="form-control" id="futures_position_size_usd" name="futures_position_size_usd" 
+                               value="{{ config.get('futures_strategy', {}).get('position_size_usd', 500) }}" 
+                               min="100" max="10000" step="100">
+                        <div class="form-text">Base position size in USD</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="futures_min_signal_strength" class="form-label">Min Signal Strength</label>
+                        <input type="number" class="form-control" id="futures_min_signal_strength" name="futures_min_signal_strength" 
+                               value="{{ config.get('futures_strategy', {}).get('min_signal_strength', 4) }}" 
+                               min="1" max="15" step="1">
+                        <div class="form-text">Minimum signal strength to consider</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="futures_require_trend_alignment" class="form-label">Require Trend Alignment</label>
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="futures_require_trend_alignment" name="futures_require_trend_alignment" 
+                                   {{ 'checked' if config.get('futures_strategy', {}).get('require_trend_alignment', True) else '' }}>
+                            <label class="form-check-label" for="futures_require_trend_alignment">
+                                Block trades against 1H trend
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="futures_min_trend_strength" class="form-label">Min Trend Strength</label>
+                        <input type="number" class="form-control" id="futures_min_trend_strength" name="futures_min_trend_strength" 
+                               value="{{ config.get('futures_strategy', {}).get('min_trend_strength', 5) }}" 
+                               min="1" max="15" step="1">
+                        <div class="form-text">Minimum 1H trend strength required</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="futures_min_time_between_trades" class="form-label">Min Time Between Trades (seconds)</label>
+                        <input type="number" class="form-control" id="futures_min_time_between_trades" name="futures_min_time_between_trades" 
+                               value="{{ config.get('futures_strategy', {}).get('min_time_between_trades', 3600) }}" 
+                               min="300" max="86400" step="300">
+                        <div class="form-text">Minimum time between new futures trades</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 1H Trend Analysis Thresholds -->
+            <div class="alert alert-warning">
+                <i class="bi bi-clock"></i>
+                <strong>1H Trend Classification:</strong> Configure score thresholds to classify 1-hour trend as Bullish, Bearish, or Neutral.
+            </div>
+            
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="trend_bullish_threshold" class="form-label">Bullish Threshold</label>
+                        <input type="number" class="form-control" id="trend_bullish_threshold" name="trend_bullish_threshold" 
+                               value="{{ config.get('futures_strategy', {}).get('trend_bullish_threshold', 3) }}"
+                               min="1" max="20" step="1">
+                        <div class="form-text">Score ≥ this value = Bullish trend</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="trend_bearish_threshold" class="form-label">Bearish Threshold</label>
+                        <input type="number" class="form-control" id="trend_bearish_threshold" name="trend_bearish_threshold" 
+                               value="{{ config.get('futures_strategy', {}).get('trend_bearish_threshold', -3) }}"
+                               min="-20" max="-1" step="1">
+                        <div class="form-text">Score ≤ this value = Bearish trend</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label class="form-label">Neutral Zone</label>
+                        <div class="form-control-plaintext">
+                            Between thresholds = Neutral
+                        </div>
+                        <div class="form-text">Scores between bearish and bullish thresholds</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="mb-3">
+                        <label for="futures_enabled" class="form-label">Enable BTC Futures Trading</label>
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="futures_enabled" name="futures_enabled" 
+                                   {{ 'checked' if config.get('futures_strategy', {}).get('enabled', True) else '' }}>
+                            <label class="form-check-label" for="futures_enabled">
+                                Activate futures trading signals
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Neutral Strategy Configuration -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-bar-chart"></i> Neutral Strategy (Strangle Selling)
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i>
+                <strong>Neutral Strategy:</strong> When higher timeframe is neutral AND 5-min signal score < 9, sell strangle (call + put) 6 strikes away from ATM.
+            </div>
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="neutral_lot_size" class="form-label">Lot Size</label>
+                        <input type="number" class="form-control" id="neutral_lot_size" name="neutral_lot_size" 
+                               value="{{ config.get('neutral_strategy', {}).get('lot_size', 1) }}" 
+                               min="1" max="10" step="1">
+                        <div class="form-text">Number of lots to trade per signal</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="neutral_leverage" class="form-label">Leverage (%)</label>
+                        <input type="number" class="form-control" id="neutral_leverage" name="neutral_leverage" 
+                               value="{{ config.get('neutral_strategy', {}).get('leverage_percentage', 50) }}" 
+                               min="25" max="200" step="25">
+                        <div class="form-text">Leverage percentage for margin calculation</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="strike_distance" class="form-label">Strike Distance</label>
+                        <input type="number" class="form-control" id="strike_distance" name="strike_distance" 
+                               value="{{ config.get('neutral_strategy', {}).get('strike_distance', 6) }}" 
+                               min="3" max="15" step="1">
+                        <div class="form-text">Strikes away from ATM</div>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="neutral_stop_loss" class="form-label">Stop Loss (% of Margin)</label>
+                        <input type="number" class="form-control" id="neutral_stop_loss" name="neutral_stop_loss" 
+                               value="{{ config.get('neutral_strategy', {}).get('stop_loss_pct', 50) }}" 
+                               min="20" max="100" step="5">
+                        <div class="form-text">Exit when loss exceeds % of margin</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="neutral_profit_target" class="form-label">Profit Target (% of Premium)</label>
+                        <input type="number" class="form-control" id="neutral_profit_target" name="neutral_profit_target" 
+                               value="{{ config.get('neutral_strategy', {}).get('profit_target_pct', 50) }}" 
+                               min="20" max="80" step="5">
+                        <div class="form-text">Exit when profit reaches % of premium collected</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="mb-3">
+                        <label for="neutral_enabled" class="form-label">Enable Neutral Strategy</label>
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="neutral_enabled" name="neutral_enabled" 
+                                   {{ 'checked' if config.get('neutral_strategy', {}).get('enabled', True) else '' }}>
+                            <label class="form-check-label" for="neutral_enabled">
+                                Activate strangle selling in neutral conditions
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+        <button type="submit" class="btn btn-primary btn-lg">
+            <i class="bi bi-check-circle"></i> Save Settings
+        </button>
+        <a href="/" class="btn btn-secondary btn-lg">Cancel</a>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('testApi').addEventListener('click', function() {
+    const apiKey = document.getElementById('api_key').value;
+    const apiSecret = document.getElementById('api_secret').value;
+    const paperTrading = document.getElementById('paper_trading').checked;
+    
+    if (!apiKey || !apiSecret) {
+        alert('Please enter both API Key and Secret');
+        return;
+    }
+    
+    const button = this;
+    const originalText = button.innerHTML;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Testing...';
+    button.disabled = true;
+    
+    const formData = new FormData();
+    formData.append('api_key', apiKey);
+    formData.append('api_secret', apiSecret);
+    if (paperTrading) formData.append('paper_trading', 'on');
+    
+    fetch('/test_api', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ ' + data.message);
+        } else {
+            alert('❌ ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('❌ Connection test failed: ' + error.message);
+    })
+    .finally(() => {
+        button.innerHTML = originalText;
+        button.disabled = false;
+    });
+});
+
+// Handle dollar-based risk management toggle
+document.getElementById('dollar_based_enabled').addEventListener('change', function() {
+    const dollarSettingsDiv = document.getElementById('dollar_risk_settings');
+    if (this.checked) {
+        dollarSettingsDiv.style.display = 'block';
+    } else {
+        dollarSettingsDiv.style.display = 'none';
+    }
+});
+</script>
+{% endblock %}

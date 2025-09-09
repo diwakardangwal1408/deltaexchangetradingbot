@@ -1,0 +1,44 @@
+{
+  "api_key": "kLlcQP3mMqM67NEdLPnF0hJM8dIrgD",
+  "api_secret": "E6Imb1Uncw8GCYPdOsx8PQLvBtTCyL9LkezxrAr2009s3h6xLT3KfZxgq7g5",
+  "paper_trading": true,
+  "portfolio_size": 1000.0,
+  "position_size_usd": 500.0,
+  "max_daily_loss": 200.0,
+  "max_positions": 2,
+  "min_premium": 0.001,
+  "max_premium": 0.01,
+  "order_timeout": 300,
+  "risk_management": {
+    "max_risk_per_trade": 0.5,
+    "stop_loss_pct": 50.0,
+    "take_profit_pct": 100.0,
+    "quick_profit_pct": 30.0,
+    "quick_profit_time_hours": 1.0,
+    "time_exit_hours": 20.0
+  },
+  "strategy_params": {
+    "min_signal_strength": 4,
+    "volume_threshold": 2.0,
+    "min_time_between_trades": 3600
+  },
+  "directional_strategy": {
+    "enabled": true,
+    "bullish_signal_threshold": 6,
+    "bearish_signal_threshold": -11,
+    "require_trend_alignment": true,
+    "allow_counter_trend_trades": false,
+    "min_trend_strength": 5
+  },
+  "neutral_strategy": {
+    "enabled": true,
+    "lot_size": 10,
+    "leverage_percentage": 50.0,
+    "strike_distance": 8,
+    "expiry_days": 1,
+    "trailing_stop_loss_pct": 20.0,
+    "profit_target_pct": 30.0,
+    "stop_loss_pct": 50.0,
+    "min_time_between_neutral_trades": 7200
+  }
+}
