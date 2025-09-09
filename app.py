@@ -14,6 +14,22 @@ from delta_btc_strategy import DeltaBTCOptionsTrader
 from btc_multi_timeframe_strategy import BTCMultiTimeframeStrategy
 from config_manager import config_manager
 from logger_config import get_logger
+from candle_timing import is_candle_closed, get_last_candle_close_time, seconds_until_next_candle_close, format_candle_times_display
+
+# Global indicator caches based on proper candle timing
+_indicator_cache = {
+    '3m': {
+        'data': None,
+        'last_candle_close': None,
+        'calculated_at': None
+    },
+    '1h': {
+        'data': None,
+        'analysis_result': None,
+        'last_candle_close': None,
+        'calculated_at': None
+    }
+}
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'  # Change this to a random secret key
@@ -80,6 +96,70 @@ def get_strategy():
         )
     
     return _cached_strategy
+
+def get_cached_indicators(timeframe: str):
+    """Get cached indicators, only recalculate when candle actually closes"""
+    global _indicator_cache
+    
+    try:
+        interval_minutes = 3 if timeframe == '3m' else 60
+        cache_key = timeframe
+        
+        # Check if candle has closed since last calculation
+        last_candle_close = get_last_candle_close_time(interval_minutes)
+        
+        cache = _indicator_cache[cache_key]
+        need_recalculation = (
+            cache['last_candle_close'] != last_candle_close or
+            cache['data'] is None
+        )
+        
+        if need_recalculation:
+            logging.info(f"{timeframe.upper()} Cache UPDATE: New candle closed at {last_candle_close}")
+            
+            # Get fresh data
+            df_raw = get_btc_data(timeframe=timeframe)
+            if df_raw is None or len(df_raw) == 0:
+                return None
+            
+            if timeframe == '3m':
+                # For 3M, we store the raw data with technical indicators already calculated
+                cache['data'] = df_raw
+                cache['last_candle_close'] = last_candle_close
+                cache['calculated_at'] = datetime.now()
+                return df_raw
+            
+            elif timeframe == '1h':
+                # For 1H, we need to calculate higher timeframe analysis
+                config = load_config()
+                futures_config = config.get('futures_strategy', {})
+                trend_bullish_threshold = futures_config.get('trend_bullish_threshold', 3)
+                trend_bearish_threshold = futures_config.get('trend_bearish_threshold', -3)
+                
+                # Calculate higher timeframe indicators
+                df_1h_analyzed = calculate_higher_timeframe_indicators(
+                    df_raw, 
+                    trend_bullish_threshold, 
+                    trend_bearish_threshold
+                )
+                
+                # Update cache
+                cache['data'] = df_raw
+                cache['analysis_result'] = df_1h_analyzed
+                cache['last_candle_close'] = last_candle_close
+                cache['calculated_at'] = datetime.now()
+                
+                return df_1h_analyzed
+        else:
+            logging.info(f"{timeframe.upper()} Cache HIT: Using cached data from {cache['calculated_at']}")
+            if timeframe == '3m':
+                return cache['data']
+            else:
+                return cache['analysis_result']
+                
+    except Exception as e:
+        logging.error(f"Error in get_cached_indicators({timeframe}): {e}")
+        return None
 
 def get_btc_data(timeframe='5m'):
     """Get BTC data and calculate indicators"""
@@ -688,12 +768,20 @@ def dashboard():
 @app.route('/settings')
 def settings():
     """Settings page"""
-    config = load_config()
+    config = config_manager.get_all_config()
+    print("CONSOLE: SETTINGS GET - Loading settings page")  # This will show in server console
+    app_logger.info(f"SETTINGS GET - Loading settings page")
+    app_logger.debug(f"Settings page config source - max_positions: {config.get('max_positions')}")
+    app_logger.debug(f"Config keys: {list(config.keys())}")
+    app_logger.info(f"SETTINGS GET - Current trend_bullish_threshold: {config.get('futures_strategy', {}).get('trend_bullish_threshold')}")
     return render_template('settings.html', config=config)
 
 @app.route('/save_settings', methods=['POST'])
 def save_settings():
     """Save settings"""
+    print("CONSOLE: SAVE_SETTINGS - Route called!")  # This will show in server console
+    app_logger.info(f"SAVE_SETTINGS - Route called! Form data received.")
+    app_logger.info(f"SAVE_SETTINGS - Form keys: {list(request.form.keys())}")
     try:
         config = {
             'api_key': request.form.get('api_key', '').strip(),
@@ -728,20 +816,47 @@ def save_settings():
                 'min_time_between_neutral_trades': 7200
             },
             'dollar_based_risk': {
-                'enabled': request.form.get('dollar_based_enabled') == 'on',
+                'enabled': request.form.get('exit_mode', 'dollar') == 'dollar',
                 'stop_loss_usd': float(request.form.get('dollar_stop_loss', 100)),
                 'take_profit_usd': float(request.form.get('dollar_take_profit', 200)),
                 'trailing_stop_usd': float(request.form.get('dollar_trailing_stop', 50)),
                 'quick_profit_usd': float(request.form.get('dollar_quick_profit', 60)),
                 'max_risk_usd': float(request.form.get('dollar_max_risk', 150)),
                 'daily_loss_limit_usd': float(request.form.get('dollar_daily_loss_limit', 500))
+            },
+            'trading_timing': {
+                'trading_start_time': request.form.get('trading_start_time', '17:30').strip(),
+                'timezone': request.form.get('timezone', 'Asia/Kolkata').strip()
+            },
+            'atr_exits': {
+                'enabled': request.form.get('exit_mode', 'dollar') == 'atr',
+                'atr_period': int(request.form.get('atr_period', 14)),
+                'stop_loss_atr_multiplier': float(request.form.get('stop_loss_atr_multiplier', 2.0)),
+                'take_profit_atr_multiplier': float(request.form.get('take_profit_atr_multiplier', 3.0)),
+                'trailing_atr_multiplier': float(request.form.get('trailing_atr_multiplier', 1.5)),
+                'buffer_zone_atr_multiplier': float(request.form.get('buffer_zone_atr_multiplier', 0.3)),
+                'volume_threshold_percentile': float(request.form.get('volume_threshold_percentile', 70)),
+                'hunting_zone_offset': float(request.form.get('hunting_zone_offset', 5))
             }
         }
         
         app_logger.debug(f"DEBUG: Attempting to save config...")
         app_logger.debug(f"DEBUG: Sample values - API Key: {config.get('api_key', '')[:10]}..., Portfolio Size: {config.get('portfolio_size')}")
+        app_logger.debug(f"DEBUG: Max positions value being saved: {config.get('max_positions')}")
         
-        if save_config(config):
+        # Debug the specific issue
+        app_logger.info(f"FORM DATA - trend_bullish_threshold: '{request.form.get('trend_bullish_threshold')}' (type: {type(request.form.get('trend_bullish_threshold'))})")
+        app_logger.info(f"PROCESSED - trend_bullish_threshold: {config.get('futures_strategy', {}).get('trend_bullish_threshold')} (type: {type(config.get('futures_strategy', {}).get('trend_bullish_threshold'))})")
+        
+        if config_manager.save_config(config):
+            # Reload config after successful save
+            config_manager.load_config()
+            
+            # Verify what actually got saved
+            saved_config = config_manager.get_all_config()
+            saved_bullish = saved_config.get('futures_strategy', {}).get('trend_bullish_threshold', 'NOT_FOUND')
+            app_logger.info(f"VERIFIED SAVE - trend_bullish_threshold in file: {saved_bullish}")
+            
             app_logger.debug(f"DEBUG: Configuration saved successfully!")
             flash('Settings saved successfully!', 'success')
         else:
@@ -1027,8 +1142,8 @@ def api_positions():
 def api_signal_data():
     """Get current trading signals and technical indicators for 3-minute timeframe"""
     try:
-        # Get 3-minute data for signals
-        df = get_btc_data(timeframe='3m')
+        # Get cached 3-minute data (only updates when 3M candle closes)
+        df = get_cached_indicators('3m')
         if df is not None and len(df) > 0:
             latest = df.iloc[-1]
             
@@ -1067,17 +1182,9 @@ def api_signal_data():
             # Get 1H trend analysis for trade decision
             trade_analysis = None
             try:
-                # Get 1H trend data
-                df_1h = get_btc_data(timeframe='1h')
-                if df_1h is not None and len(df_1h) > 0:
-                    # Get higher timeframe analysis
-                    config = load_config()
-                    futures_config = config.get('futures_strategy', {})
-                    trend_bullish_threshold = futures_config.get('trend_bullish_threshold', 3)
-                    trend_bearish_threshold = futures_config.get('trend_bearish_threshold', -3)
-                    
-                    # Calculate higher timeframe indicators to get 1H trend
-                    df_1h_analyzed = calculate_higher_timeframe_indicators(df_1h, trend_bullish_threshold, trend_bearish_threshold)
+                # Get cached 1H trend analysis (only recalculates when 1H candle closes)
+                df_1h_analyzed = get_cached_indicators('1h')
+                if df_1h_analyzed is not None and len(df_1h_analyzed) > 0:
                     latest_1h = df_1h_analyzed.iloc[-1]
                     
                     # Extract 1H trend data
@@ -1285,27 +1392,26 @@ def api_higher_timeframe_trend():
         last_hour_close = last_hour_close - timedelta(hours=1)
     
     try:
-        # Get 1-hour data with full technical analysis
-        df_1h = get_btc_data(timeframe='1h')
-        if df_1h is not None and len(df_1h) > 0:
-            # The calculate_higher_timeframe_indicators function already adds the detailed analysis
-            # Extract the result that was calculated in calculate_higher_timeframe_indicators
-            latest = df_1h.iloc[-1]
+        # Get cached 1-hour analysis (only recalculates when 1H candle closes)
+        df_1h_analyzed = get_cached_indicators('1h')
+        if df_1h_analyzed is not None and len(df_1h_analyzed) > 0:
+            # Extract the result from cached analysis
+            latest = df_1h_analyzed.iloc[-1]
             
-            # Get the detailed analysis from the dataframe or recalculate it
+            # Use cached analysis results directly (no need to recalculate)
             try:
-                # Try to use the cached result from calculate_higher_timeframe_indicators
+                # Extract trend data from cached analysis
                 trend_direction = latest.get('Trend_Direction', 'NEUTRAL')
                 trend_strength_score = float(latest.get('Trend_Strength', 0))
                 
-                # Re-run the analysis to get detailed indicator breakdown
+                # Get raw 1H data for detailed indicator calculation (for display purposes)
+                df_1h_raw = _indicator_cache['1h']['data'] if _indicator_cache['1h']['data'] is not None else get_btc_data(timeframe='1h')
+                
+                # Get threshold values from config
                 config = load_config()
                 futures_config = config.get('futures_strategy', {})
                 bullish_threshold = futures_config.get('trend_bullish_threshold', 3)
                 bearish_threshold = futures_config.get('trend_bearish_threshold', -3)
-                
-                # Recalculate with detailed breakdown
-                df_analyzed = calculate_higher_timeframe_indicators(df_1h, bullish_threshold, bearish_threshold)
                 
                 # Extract detailed results from the analysis function
                 # Since calculate_higher_timeframe_indicators returns the result dict, we need to call it properly
@@ -1376,16 +1482,16 @@ def api_higher_timeframe_trend():
                     
                     return jaw, teeth, lips, eating_up, eating_down
                 
-                # Calculate all indicators
-                fisher, fisher_signal = fisher_transform(df_1h)
-                tsi = true_strength_index(df_1h)
-                pivot, r1, s1 = calculate_pivot_points(df_1h)
-                uptrend, downtrend = dow_theory_analysis(df_1h)
-                jaw, teeth, lips, eating_up, eating_down = williams_alligator(df_1h)
+                # Calculate all indicators using raw data for display
+                fisher, fisher_signal = fisher_transform(df_1h_raw)
+                tsi = true_strength_index(df_1h_raw)
+                pivot, r1, s1 = calculate_pivot_points(df_1h_raw)
+                uptrend, downtrend = dow_theory_analysis(df_1h_raw)
+                jaw, teeth, lips, eating_up, eating_down = williams_alligator(df_1h_raw)
                 
                 # Get latest values and calculate scores
-                latest_candle = df_1h.iloc[-1]
-                latest_idx = len(df_1h) - 1
+                latest_candle = df_1h_raw.iloc[-1]
+                latest_idx = len(df_1h_raw) - 1
                 
                 # Scoring system
                 scores = {'fisher': 0, 'tsi': 0, 'pivot': 0, 'dow': 0, 'alligator': 0}
@@ -1828,20 +1934,6 @@ def api_backtest_run():
                     safe_results = make_json_safe(results)
                     app_logger.info("DEBUG: make_json_safe completed")
                     
-                    # Limit large arrays/DataFrames to prevent huge JSON payloads
-                    if 'trades' in safe_results and isinstance(safe_results['trades'], list):
-                        # Limit to last 100 trades for display
-                        if len(safe_results['trades']) > 100:
-                            safe_results['trades_count'] = len(safe_results['trades'])
-                            safe_results['trades'] = safe_results['trades'][-100:]
-                            app_logger.info(f"Limited trades display to last 100 out of {safe_results['trades_count']} total trades")
-                    
-                    if 'equity_curve' in safe_results and isinstance(safe_results['equity_curve'], list):
-                        # Limit equity curve to every 10th point for charting
-                        if len(safe_results['equity_curve']) > 1000:
-                            original_len = len(safe_results['equity_curve'])
-                            safe_results['equity_curve'] = safe_results['equity_curve'][::10]  # Every 10th point
-                            app_logger.info(f"Limited equity curve display to {len(safe_results['equity_curve'])} points out of {original_len} total")
                     
                     # Debug: Check safe_results content
                     app_logger.info(f"DEBUG: safe_results type: {type(safe_results)}")
@@ -1959,6 +2051,24 @@ def api_config():
         return jsonify(config)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/candle_times/<trading_start_time>')
+def api_candle_times(trading_start_time):
+    """Get formatted candle times for settings page display"""
+    try:
+        times_3m, times_1h = format_candle_times_display(trading_start_time)
+        return jsonify({
+            'status': 'success',
+            '3m_times': times_3m,
+            '1h_times': times_1h
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error', 
+            'message': str(e),
+            '3m_times': '17:33, 17:36, 17:39...',
+            '1h_times': '18:30, 19:30, 20:30...'
+        })
 
 if __name__ == '__main__':
     # Ensure templates and static directories exist

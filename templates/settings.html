@@ -61,7 +61,7 @@
                     <div class="mb-3">
                         <label for="portfolio_size" class="form-label">Portfolio Size (USD)</label>
                         <input type="number" class="form-control" id="portfolio_size" name="portfolio_size" 
-                               value="{{ config.get('portfolio_size', 100000) }}" min="1000" step="1000">
+                               value="{{ config.get('portfolio_size', 100000) }}">
                         <div class="form-text">Total portfolio value in USD</div>
                     </div>
                 </div>
@@ -69,7 +69,7 @@
                     <div class="mb-3">
                         <label for="position_size_usd" class="form-label">Position Size (USD)</label>
                         <input type="number" class="form-control" id="position_size_usd" name="position_size_usd" 
-                               value="{{ config.get('position_size_usd', 500) }}" min="10" step="10">
+                               value="{{ config.get('position_size_usd', 500) }}">
                         <div class="form-text">Amount to risk per trade</div>
                     </div>
                 </div>
@@ -79,7 +79,7 @@
                     <div class="mb-3">
                         <label for="max_daily_loss" class="form-label">Max Daily Loss (USD)</label>
                         <input type="number" class="form-control" id="max_daily_loss" name="max_daily_loss" 
-                               value="{{ config.get('max_daily_loss', 2000) }}" min="100" step="100">
+                               value="{{ config.get('max_daily_loss', 2000) }}">
                         <div class="form-text">Bot stops trading if daily loss exceeds this amount</div>
                     </div>
                 </div>
@@ -87,7 +87,7 @@
                     <div class="mb-3">
                         <label for="max_positions" class="form-label">Max Positions</label>
                         <input type="number" class="form-control" id="max_positions" name="max_positions" 
-                               value="{{ config.get('max_positions', 2) }}" min="1" max="10">
+                               value="{{ config.get('max_positions', 2) }}">
                         <div class="form-text">Maximum number of concurrent positions</div>
                     </div>
                 </div>
@@ -95,83 +95,216 @@
         </div>
     </div>
 
+    <!-- Trading Timing Configuration -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-clock"></i> Trading Timing Configuration
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info mb-3">
+                <i class="bi bi-info-circle"></i>
+                Configure when candles close to sync with major trading platforms like TradingView.
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="trading_start_time" class="form-label">Trading Start Time</label>
+                        <input type="time" class="form-control" id="trading_start_time" name="trading_start_time" 
+                               value="{{ config.get('trading_timing', {}).get('trading_start_time', '17:30') }}">
+                        <div class="form-text">Time when trading begins (affects candle timing)</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="timezone" class="form-label">Timezone</label>
+                        <select class="form-select" id="timezone" name="timezone">
+                            <option value="Asia/Kolkata" {{ 'selected' if config.get('trading_timing', {}).get('timezone', 'Asia/Kolkata') == 'Asia/Kolkata' else '' }}>Asia/Kolkata (IST)</option>
+                            <option value="UTC" {{ 'selected' if config.get('trading_timing', {}).get('timezone') == 'UTC' else '' }}>UTC</option>
+                            <option value="America/New_York" {{ 'selected' if config.get('trading_timing', {}).get('timezone') == 'America/New_York' else '' }}>America/New_York (EST)</option>
+                            <option value="Europe/London" {{ 'selected' if config.get('trading_timing', {}).get('timezone') == 'Europe/London' else '' }}>Europe/London (GMT)</option>
+                        </select>
+                        <div class="form-text">Timezone for trading schedule</div>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-secondary">
+                        <strong>Candle Close Times:</strong><br>
+                        • 3M Candles: <span id="candle_3m_times">17:33, 17:36, 17:39...</span><br>
+                        • 1H Candles: <span id="candle_1h_times">18:30, 19:30, 20:30...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Risk Management -->
     <div class="card mb-4">
-        <div class="card-header d-flex align-items-center">
-            <i class="bi bi-currency-dollar me-2"></i> 
-            Risk Management
-            <div class="form-check form-switch ms-auto">
-                <input class="form-check-input" type="checkbox" id="dollar_based_enabled" name="dollar_based_enabled" 
-                       {{ 'checked' if config.get('dollar_based_risk', {}).get('enabled', false) else '' }}>
-                <label class="form-check-label" for="dollar_based_enabled">
-                    Enable Dollar-Based Risk
-                </label>
-            </div>
+        <div class="card-header">
+            <i class="bi bi-shield-check me-2"></i> 
+            Risk Management & Exit Strategy
         </div>
-        <div class="card-body" id="dollar_risk_settings" style="{{ 'display: block;' if config.get('dollar_based_risk', {}).get('enabled', false) else 'display: none;' }}">
+        <div class="card-body">
             <div class="alert alert-info mb-3">
                 <i class="bi bi-info-circle"></i>
-                <strong>Dollar-Based Mode:</strong> All risk management values are in absolute dollar amounts instead of percentages.
+                Choose your exit strategy: <strong>Fixed Dollar</strong> (simple, predictable) or <strong>ATR-Based</strong> (dynamic, adapts to market volatility)
             </div>
             
-            <div class="row">
-                <div class="col-md-4">
-                    <div class="mb-3">
-                        <label for="dollar_stop_loss" class="form-label">Stop Loss ($)</label>
-                        <input type="number" class="form-control" id="dollar_stop_loss" name="dollar_stop_loss" 
-                               value="{{ config.get('dollar_based_risk', {}).get('stop_loss_usd', 100) }}" 
-                               min="10" max="10000" step="5">
-                        <div class="form-text">Maximum loss per trade in USD</div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="mb-3">
-                        <label for="dollar_take_profit" class="form-label">Take Profit ($)</label>
-                        <input type="number" class="form-control" id="dollar_take_profit" name="dollar_take_profit" 
-                               value="{{ config.get('dollar_based_risk', {}).get('take_profit_usd', 200) }}" 
-                               min="20" max="20000" step="10">
-                        <div class="form-text">Profit target per trade in USD</div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="mb-3">
-                        <label for="dollar_trailing_stop" class="form-label">Trailing Stop ($)</label>
-                        <input type="number" class="form-control" id="dollar_trailing_stop" name="dollar_trailing_stop" 
-                               value="{{ config.get('dollar_based_risk', {}).get('trailing_stop_usd', 50) }}" 
-                               min="5" max="1000" step="5">
-                        <div class="form-text">Trailing stop distance in USD</div>
+            <!-- Exit Mode Selection -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <label class="form-label fw-bold">Exit Strategy Mode</label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="exit_mode" id="exit_mode_dollar" value="dollar" 
+                               {{ 'checked' if not config.get('atr_exits', {}).get('enabled', False) else '' }}>
+                        <label class="btn btn-outline-primary" for="exit_mode_dollar">
+                            <i class="bi bi-currency-dollar"></i> Fixed Dollar Exits
+                        </label>
+                        
+                        <input type="radio" class="btn-check" name="exit_mode" id="exit_mode_atr" value="atr"
+                               {{ 'checked' if config.get('atr_exits', {}).get('enabled', False) else '' }}>
+                        <label class="btn btn-outline-primary" for="exit_mode_atr">
+                            <i class="bi bi-graph-up"></i> ATR-Based Exits (Anti-Hunt)
+                        </label>
                     </div>
                 </div>
             </div>
             
-            <div class="row">
-                <div class="col-md-4">
-                    <div class="mb-3">
-                        <label for="dollar_quick_profit" class="form-label">Quick Profit ($)</label>
-                        <input type="number" class="form-control" id="dollar_quick_profit" name="dollar_quick_profit" 
-                               value="{{ config.get('dollar_based_risk', {}).get('quick_profit_usd', 60) }}" 
-                               min="10" max="5000" step="5">
-                        <div class="form-text">Quick profit target in USD</div>
+            <!-- Dollar-Based Settings -->
+            <div id="dollar_risk_settings" style="{{ 'display: block;' if not config.get('atr_exits', {}).get('enabled', False) else 'display: none;' }}">
+                <div class="alert alert-secondary mb-3">
+                    <strong>Fixed Dollar Mode:</strong> Uses absolute dollar amounts for all exit levels. Simple and predictable.
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="dollar_stop_loss" class="form-label">Stop Loss ($)</label>
+                            <input type="number" class="form-control" id="dollar_stop_loss" name="dollar_stop_loss" 
+                                   value="{{ config.get('dollar_based_risk', {}).get('stop_loss_usd', 100) }}">
+                            <div class="form-text">Maximum loss per trade in USD</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="dollar_take_profit" class="form-label">Take Profit ($)</label>
+                            <input type="number" class="form-control" id="dollar_take_profit" name="dollar_take_profit" 
+                                   value="{{ config.get('dollar_based_risk', {}).get('take_profit_usd', 200) }}">
+                            <div class="form-text">Profit target per trade in USD</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="dollar_trailing_stop" class="form-label">Trailing Stop ($)</label>
+                            <input type="number" class="form-control" id="dollar_trailing_stop" name="dollar_trailing_stop" 
+                                   value="{{ config.get('dollar_based_risk', {}).get('trailing_stop_usd', 50) }}">
+                            <div class="form-text">Trailing stop distance in USD</div>
+                        </div>
                     </div>
                 </div>
-                <div class="col-md-4">
-                    <div class="mb-3">
-                        <label for="dollar_max_risk" class="form-label">Max Risk Per Trade ($)</label>
-                        <input type="number" class="form-control" id="dollar_max_risk" name="dollar_max_risk" 
-                               value="{{ config.get('dollar_based_risk', {}).get('max_risk_usd', 150) }}" 
-                               min="25" max="5000" step="25">
-                        <div class="form-text">Maximum amount to risk per trade</div>
+                
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="dollar_quick_profit" class="form-label">Quick Profit ($)</label>
+                            <input type="number" class="form-control" id="dollar_quick_profit" name="dollar_quick_profit" 
+                                   value="{{ config.get('dollar_based_risk', {}).get('quick_profit_usd', 60) }}">
+                            <div class="form-text">Quick profit target in USD</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="dollar_max_risk" class="form-label">Max Risk Per Trade ($)</label>
+                            <input type="number" class="form-control" id="dollar_max_risk" name="dollar_max_risk" 
+                                   value="{{ config.get('dollar_based_risk', {}).get('max_risk_usd', 150) }}">
+                            <div class="form-text">Maximum amount to risk per trade</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="dollar_daily_loss_limit" class="form-label">Daily Loss Limit ($)</label>
+                            <input type="number" class="form-control" id="dollar_daily_loss_limit" name="dollar_daily_loss_limit" 
+                                   value="{{ config.get('dollar_based_risk', {}).get('daily_loss_limit_usd', 500) }}">
+                            <div class="form-text">Maximum daily loss before stopping</div>
+                        </div>
                     </div>
                 </div>
-                <div class="col-md-4">
-                    <div class="mb-3">
-                        <label for="dollar_daily_loss_limit" class="form-label">Daily Loss Limit ($)</label>
-                        <input type="number" class="form-control" id="dollar_daily_loss_limit" name="dollar_daily_loss_limit" 
-                               value="{{ config.get('dollar_based_risk', {}).get('daily_loss_limit_usd', 500) }}" 
-                               min="100" max="10000" step="50">
-                        <div class="form-text">Maximum daily loss before stopping</div>
+            </div>
+            
+            <!-- ATR-Based Settings -->
+            <div id="atr_risk_settings" style="{{ 'display: block;' if config.get('atr_exits', {}).get('enabled', False) else 'display: none;' }}">
+                <div class="alert alert-secondary mb-3">
+                    <strong>ATR Mode:</strong> Dynamic exits based on market volatility with stop-hunt protection.
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="atr_period" class="form-label">ATR Period</label>
+                            <input type="number" class="form-control" id="atr_period" name="atr_period" 
+                                   value="{{ config.get('atr_exits', {}).get('atr_period', 14) }}" 
+                                   min="5" max="50">
+                            <div class="form-text">Number of candles for ATR calculation</div>
+                        </div>
                     </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="stop_loss_atr_multiplier" class="form-label">Stop Loss Multiplier</label>
+                            <input type="number" class="form-control" id="stop_loss_atr_multiplier" name="stop_loss_atr_multiplier" 
+                                   value="{{ config.get('atr_exits', {}).get('stop_loss_atr_multiplier', 2.0) }}" 
+                                   step="0.1" min="0.5" max="5.0">
+                            <div class="form-text">Stop = Entry ± (ATR × multiplier)</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="take_profit_atr_multiplier" class="form-label">Take Profit Multiplier</label>
+                            <input type="number" class="form-control" id="take_profit_atr_multiplier" name="take_profit_atr_multiplier" 
+                                   value="{{ config.get('atr_exits', {}).get('take_profit_atr_multiplier', 3.0) }}" 
+                                   step="0.1" min="1.0" max="10.0">
+                            <div class="form-text">Profit = Entry ± (ATR × multiplier)</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="trailing_atr_multiplier" class="form-label">Trailing Stop Multiplier</label>
+                            <input type="number" class="form-control" id="trailing_atr_multiplier" name="trailing_atr_multiplier" 
+                                   value="{{ config.get('atr_exits', {}).get('trailing_atr_multiplier', 1.5) }}" 
+                                   step="0.1" min="0.5" max="5.0">
+                            <div class="form-text">Trail = Price ± (ATR × multiplier)</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="volume_threshold_percentile" class="form-label">Volume Threshold (%)</label>
+                            <input type="number" class="form-control" id="volume_threshold_percentile" name="volume_threshold_percentile" 
+                                   value="{{ config.get('atr_exits', {}).get('volume_threshold_percentile', 70) }}" 
+                                   min="50" max="95">
+                            <div class="form-text">Detect high-volume hunting periods</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="hunting_zone_offset" class="form-label">Round Number Buffer</label>
+                            <input type="number" class="form-control" id="hunting_zone_offset" name="hunting_zone_offset" 
+                                   value="{{ config.get('atr_exits', {}).get('hunting_zone_offset', 5) }}" 
+                                   min="1" max="50">
+                            <div class="form-text">Distance from psychological levels</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="alert alert-warning">
+                    <small>
+                        <strong>Stop Hunt Protection Features:</strong><br>
+                        • Avoids round numbers (e.g., 45000, 45500)<br>
+                        • Increases multipliers during high volume periods<br>
+                        • Uses ATR-based buffer zones for safer exits
+                    </small>
                 </div>
             </div>
         </div>
@@ -195,7 +328,7 @@
                         <label for="futures_long_threshold" class="form-label">LONG Futures Signal Threshold</label>
                         <input type="number" class="form-control" id="futures_long_threshold" name="futures_long_threshold" 
                                value="{{ config.get('futures_strategy', {}).get('long_signal_threshold', 5) }}" 
-                               min="1" max="20" step="1">
+                              >
                         <div class="form-text">Minimum score to trigger LONG futures position (1-20 range)</div>
                     </div>
                 </div>
@@ -204,7 +337,7 @@
                         <label for="futures_short_threshold" class="form-label">SHORT Futures Signal Threshold</label>
                         <input type="number" class="form-control" id="futures_short_threshold" name="futures_short_threshold" 
                                value="{{ config.get('futures_strategy', {}).get('short_signal_threshold', -7) }}" 
-                               min="-20" max="-1" step="1">
+                              >
                         <div class="form-text">Maximum score to trigger SHORT futures position (-20 to -1 range)</div>
                     </div>
                 </div>
@@ -216,7 +349,7 @@
                         <label for="futures_leverage" class="form-label">Leverage</label>
                         <input type="number" class="form-control" id="futures_leverage" name="futures_leverage" 
                                value="{{ config.get('futures_strategy', {}).get('leverage', 10) }}" 
-                               min="1" max="25" step="1">
+                              >
                         <div class="form-text">Leverage multiplier for futures positions</div>
                     </div>
                 </div>
@@ -225,7 +358,7 @@
                         <label for="futures_position_size_usd" class="form-label">Position Size (USD)</label>
                         <input type="number" class="form-control" id="futures_position_size_usd" name="futures_position_size_usd" 
                                value="{{ config.get('futures_strategy', {}).get('position_size_usd', 500) }}" 
-                               min="100" max="10000" step="100">
+                              >
                         <div class="form-text">Base position size in USD</div>
                     </div>
                 </div>
@@ -234,7 +367,7 @@
                         <label for="futures_min_signal_strength" class="form-label">Min Signal Strength</label>
                         <input type="number" class="form-control" id="futures_min_signal_strength" name="futures_min_signal_strength" 
                                value="{{ config.get('futures_strategy', {}).get('min_signal_strength', 4) }}" 
-                               min="1" max="15" step="1">
+                              >
                         <div class="form-text">Minimum signal strength to consider</div>
                     </div>
                 </div>
@@ -258,7 +391,7 @@
                         <label for="futures_min_trend_strength" class="form-label">Min Trend Strength</label>
                         <input type="number" class="form-control" id="futures_min_trend_strength" name="futures_min_trend_strength" 
                                value="{{ config.get('futures_strategy', {}).get('min_trend_strength', 5) }}" 
-                               min="1" max="15" step="1">
+                              >
                         <div class="form-text">Minimum 1H trend strength required</div>
                     </div>
                 </div>
@@ -267,7 +400,7 @@
                         <label for="futures_min_time_between_trades" class="form-label">Min Time Between Trades (seconds)</label>
                         <input type="number" class="form-control" id="futures_min_time_between_trades" name="futures_min_time_between_trades" 
                                value="{{ config.get('futures_strategy', {}).get('min_time_between_trades', 3600) }}" 
-                               min="300" max="86400" step="300">
+                              >
                         <div class="form-text">Minimum time between new futures trades</div>
                     </div>
                 </div>
@@ -284,8 +417,7 @@
                     <div class="mb-3">
                         <label for="trend_bullish_threshold" class="form-label">Bullish Threshold</label>
                         <input type="number" class="form-control" id="trend_bullish_threshold" name="trend_bullish_threshold" 
-                               value="{{ config.get('futures_strategy', {}).get('trend_bullish_threshold', 3) }}"
-                               min="1" max="20" step="1">
+                               value="{{ config.get('futures_strategy', {}).get('trend_bullish_threshold', 3) }}">
                         <div class="form-text">Score ≥ this value = Bullish trend</div>
                     </div>
                 </div>
@@ -293,8 +425,7 @@
                     <div class="mb-3">
                         <label for="trend_bearish_threshold" class="form-label">Bearish Threshold</label>
                         <input type="number" class="form-control" id="trend_bearish_threshold" name="trend_bearish_threshold" 
-                               value="{{ config.get('futures_strategy', {}).get('trend_bearish_threshold', -3) }}"
-                               min="-20" max="-1" step="1">
+                               value="{{ config.get('futures_strategy', {}).get('trend_bearish_threshold', -3) }}">
                         <div class="form-text">Score ≤ this value = Bearish trend</div>
                     </div>
                 </div>
@@ -342,7 +473,7 @@
                         <label for="neutral_lot_size" class="form-label">Lot Size</label>
                         <input type="number" class="form-control" id="neutral_lot_size" name="neutral_lot_size" 
                                value="{{ config.get('neutral_strategy', {}).get('lot_size', 1) }}" 
-                               min="1" max="10" step="1">
+                              >
                         <div class="form-text">Number of lots to trade per signal</div>
                     </div>
                 </div>
@@ -351,7 +482,7 @@
                         <label for="neutral_leverage" class="form-label">Leverage (%)</label>
                         <input type="number" class="form-control" id="neutral_leverage" name="neutral_leverage" 
                                value="{{ config.get('neutral_strategy', {}).get('leverage_percentage', 50) }}" 
-                               min="25" max="200" step="25">
+                              >
                         <div class="form-text">Leverage percentage for margin calculation</div>
                     </div>
                 </div>
@@ -360,7 +491,7 @@
                         <label for="strike_distance" class="form-label">Strike Distance</label>
                         <input type="number" class="form-control" id="strike_distance" name="strike_distance" 
                                value="{{ config.get('neutral_strategy', {}).get('strike_distance', 6) }}" 
-                               min="3" max="15" step="1">
+                              >
                         <div class="form-text">Strikes away from ATM</div>
                     </div>
                 </div>
@@ -371,7 +502,7 @@
                         <label for="neutral_stop_loss" class="form-label">Stop Loss (% of Margin)</label>
                         <input type="number" class="form-control" id="neutral_stop_loss" name="neutral_stop_loss" 
                                value="{{ config.get('neutral_strategy', {}).get('stop_loss_pct', 50) }}" 
-                               min="20" max="100" step="5">
+                              >
                         <div class="form-text">Exit when loss exceeds % of margin</div>
                     </div>
                 </div>
@@ -380,7 +511,7 @@
                         <label for="neutral_profit_target" class="form-label">Profit Target (% of Premium)</label>
                         <input type="number" class="form-control" id="neutral_profit_target" name="neutral_profit_target" 
                                value="{{ config.get('neutral_strategy', {}).get('profit_target_pct', 50) }}" 
-                               min="20" max="80" step="5">
+                              >
                         <div class="form-text">Exit when profit reaches % of premium collected</div>
                     </div>
                 </div>
@@ -452,14 +583,41 @@ document.getElementById('testApi').addEventListener('click', function() {
     });
 });
 
-// Handle dollar-based risk management toggle
-document.getElementById('dollar_based_enabled').addEventListener('change', function() {
-    const dollarSettingsDiv = document.getElementById('dollar_risk_settings');
+// Handle exit mode switching
+document.getElementById('exit_mode_dollar').addEventListener('change', function() {
     if (this.checked) {
-        dollarSettingsDiv.style.display = 'block';
-    } else {
-        dollarSettingsDiv.style.display = 'none';
+        document.getElementById('dollar_risk_settings').style.display = 'block';
+        document.getElementById('atr_risk_settings').style.display = 'none';
     }
 });
+
+document.getElementById('exit_mode_atr').addEventListener('change', function() {
+    if (this.checked) {
+        document.getElementById('dollar_risk_settings').style.display = 'none';
+        document.getElementById('atr_risk_settings').style.display = 'block';
+    }
+});
+
+// Update candle times when trading start time changes
+function updateCandleTimes() {
+    const tradingStartTime = document.getElementById('trading_start_time').value;
+    if (!tradingStartTime) return;
+    
+    fetch(`/api/candle_times/${tradingStartTime}`)
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            document.getElementById('candle_3m_times').textContent = data['3m_times'];
+            document.getElementById('candle_1h_times').textContent = data['1h_times'];
+        }
+    })
+    .catch(error => {
+        console.error('Error updating candle times:', error);
+    });
+}
+
+// Update candle times on page load and when start time changes
+document.addEventListener('DOMContentLoaded', updateCandleTimes);
+document.getElementById('trading_start_time').addEventListener('change', updateCandleTimes);
 </script>
 {% endblock %}

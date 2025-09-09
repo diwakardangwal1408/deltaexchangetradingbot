@@ -500,11 +500,11 @@ class BTCMultiTimeframeStrategy:
             return {'signal': 0, 'strength': 0, 'type': 'NONE', 'reason': 'Error'}
     
     def _generate_bullish_signal(self, latest):
-        """Generate CALL signal when 1H trend is bullish"""
+        """Generate LONG signal when 1H trend is bullish"""
         signal_strength = 0
         reasons = []
         
-        # Only look for CALL opportunities in 1H bullish trend
+        # Only look for LONG opportunities in 1H bullish trend
         
         # 1. Oversold on BB (pullback in uptrend)
         if latest['BB_Position'] < 0.3:
@@ -544,7 +544,7 @@ class BTCMultiTimeframeStrategy:
         return {
             'signal': 1 if signal_strength >= self.min_signal_strength else 0,
             'strength': signal_strength,
-            'type': 'CALL',
+            'type': 'LONG',
             'reasons': reasons,
             'bb_position': latest['BB_Position'],
             'rsi': latest['RSI'],
@@ -553,11 +553,11 @@ class BTCMultiTimeframeStrategy:
         }
     
     def _generate_bearish_signal(self, latest):
-        """Generate PUT signal when 1H trend is bearish"""
+        """Generate SHORT signal when 1H trend is bearish"""
         signal_strength = 0
         reasons = []
         
-        # Only look for PUT opportunities in 1H bearish trend
+        # Only look for SHORT opportunities in 1H bearish trend
         
         # 1. Overbought on BB (pullback in downtrend)
         if latest['BB_Position'] > 0.7:
@@ -597,7 +597,7 @@ class BTCMultiTimeframeStrategy:
         return {
             'signal': -1 if signal_strength >= self.min_signal_strength else 0,
             'strength': signal_strength,
-            'type': 'PUT',
+            'type': 'SHORT',
             'reasons': reasons,
             'bb_position': latest['BB_Position'],
             'rsi': latest['RSI'],
@@ -608,8 +608,8 @@ class BTCMultiTimeframeStrategy:
     def calculate_trailing_stop(self, entry_price, current_price, signal_type, highest_price=None, lowest_price=None):
         """Calculate trailing stop loss"""
         try:
-            if signal_type == 'CALL':
-                # For CALL options, trail from the highest price achieved
+            if signal_type == 'LONG':
+                # For LONG positions, trail from the highest price achieved
                 if highest_price is None:
                     highest_price = max(entry_price, current_price)
                 else:
@@ -624,8 +624,8 @@ class BTCMultiTimeframeStrategy:
                     'should_exit': current_price <= trailing_stop
                 }
             
-            elif signal_type == 'PUT':
-                # For PUT options, trail from the lowest price achieved  
+            elif signal_type == 'SHORT':
+                # For SHORT positions, trail from the lowest price achieved  
                 if lowest_price is None:
                     lowest_price = min(entry_price, current_price)
                 else:
@@ -688,6 +688,425 @@ class BTCMultiTimeframeStrategy:
         except Exception as e:
             self.logger.error(f"Error in multi-timeframe analysis: {e}")
             return None
+    
+    # ============================================================================
+    # DASHBOARD LOGIC METHODS - Exact copy from app.py for backtesting alignment
+    # ============================================================================
+    
+    def calculate_dashboard_technical_indicators(self, df):
+        """Calculate Dashboard technical indicators: VWAP, Parabolic SAR, ATR, and Price Action"""
+        import numpy as np
+        try:
+            # Ensure we have enough data
+            if len(df) < 50:
+                raise Exception("Insufficient data for Dashboard technical indicators calculation")
+            
+            # Calculate VWAP (Volume Weighted Average Price)
+            df['typical_price'] = (df['High'] + df['Low'] + df['Close']) / 3
+            df['vwap_numerator'] = (df['typical_price'] * df['Volume']).cumsum()
+            df['volume_cumsum'] = df['Volume'].cumsum()
+            df['VWAP'] = df['vwap_numerator'] / df['volume_cumsum']
+            
+            # Reset VWAP daily (approximate using 480 3-minute periods = 24 hours)
+            reset_period = 288
+            for i in range(reset_period, len(df), reset_period):
+                df.iloc[i:, df.columns.get_loc('vwap_numerator')] = (df.iloc[i:]['typical_price'] * df.iloc[i:]['Volume']).cumsum()
+                df.iloc[i:, df.columns.get_loc('volume_cumsum')] = df.iloc[i:]['Volume'].cumsum()
+                df.iloc[i:, df.columns.get_loc('VWAP')] = df.iloc[i:, df.columns.get_loc('vwap_numerator')] / df.iloc[i:, df.columns.get_loc('volume_cumsum')]
+            
+            # Calculate VWAP deviation percentage
+            df['VWAP_Dev'] = ((df['Close'] - df['VWAP']) / df['VWAP']) * 100
+            
+            # Calculate Parabolic SAR
+            def parabolic_sar(high, low, close, af_start=0.02, af_increment=0.02, af_max=0.2):
+                sar = np.zeros(len(high))
+                trend = np.zeros(len(high))
+                af = np.zeros(len(high))
+                ep = np.zeros(len(high))
+                
+                sar[0] = low.iloc[0]
+                trend[0] = 1  # 1 for up, -1 for down
+                af[0] = af_start
+                ep[0] = high.iloc[0]
+                
+                for i in range(1, len(high)):
+                    # Calculate SAR
+                    sar[i] = sar[i-1] + af[i-1] * (ep[i-1] - sar[i-1])
+                    
+                    # Check for trend reversal
+                    if trend[i-1] == 1:  # Previous trend was up
+                        if low.iloc[i] <= sar[i]:  # Trend reversal to down
+                            trend[i] = -1
+                            sar[i] = ep[i-1]  # SAR becomes previous EP
+                            ep[i] = low.iloc[i]
+                            af[i] = af_start
+                        else:  # Continue uptrend
+                            trend[i] = 1
+                            ep[i] = max(ep[i-1], high.iloc[i])
+                            if ep[i] > ep[i-1]:
+                                af[i] = min(af[i-1] + af_increment, af_max)
+                            else:
+                                af[i] = af[i-1]
+                            # Ensure SAR doesn't exceed recent lows
+                            sar[i] = min(sar[i], min(low.iloc[i-1:i+1]))
+                    else:  # Previous trend was down
+                        if high.iloc[i] >= sar[i]:  # Trend reversal to up
+                            trend[i] = 1
+                            sar[i] = ep[i-1]  # SAR becomes previous EP
+                            ep[i] = high.iloc[i]
+                            af[i] = af_start
+                        else:  # Continue downtrend
+                            trend[i] = -1
+                            ep[i] = min(ep[i-1], low.iloc[i])
+                            if ep[i] < ep[i-1]:
+                                af[i] = min(af[i-1] + af_increment, af_max)
+                            else:
+                                af[i] = af[i-1]
+                            # Ensure SAR doesn't fall below recent highs
+                            sar[i] = max(sar[i], max(high.iloc[i-1:i+1]))
+                
+                return sar, trend
+
+            # Calculate Parabolic SAR
+            sar_values, sar_trend = parabolic_sar(df['High'], df['Low'], df['Close'])
+            df['SAR'] = sar_values
+            df['SAR_Trend'] = sar_trend
+            
+            # Calculate ATR (Average True Range)
+            high_low = df['High'] - df['Low']
+            high_close_prev = np.abs(df['High'] - df['Close'].shift())
+            low_close_prev = np.abs(df['Low'] - df['Close'].shift())
+            
+            ranges = pd.concat([high_low, high_close_prev, low_close_prev], axis=1)
+            true_range = np.max(ranges, axis=1)
+            df['TR'] = true_range
+            df['ATR'] = df['TR'].rolling(window=14).mean()
+            df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
+            
+            # Calculate Price Action trend (3-period trend detection)
+            df['Price_Change_3'] = df['Close'].pct_change(periods=3) * 100
+            df['PA_Trend'] = 0
+            df.loc[df['Price_Change_3'] > 0.5, 'PA_Trend'] = 1   # Bullish trend
+            df.loc[df['Price_Change_3'] < -0.5, 'PA_Trend'] = -1  # Bearish trend
+            
+            # SCORING SYSTEM (Total possible points: 20)
+            df['VWAP_Score'] = 0
+            df['SAR_Score'] = 0
+            df['ATR_Score'] = 0
+            df['PA_Score'] = 0
+            
+            # VWAP Scoring (5 points max) - More points for stronger deviation
+            strong_bull = df['VWAP_Dev'] >= 0.8
+            bull = (df['VWAP_Dev'] >= 0.3) & (df['VWAP_Dev'] < 0.8)
+            weak_bull = (df['VWAP_Dev'] >= 0.1) & (df['VWAP_Dev'] < 0.3)
+            weak_bear = (df['VWAP_Dev'] <= -0.1) & (df['VWAP_Dev'] > -0.3)
+            bear = (df['VWAP_Dev'] <= -0.3) & (df['VWAP_Dev'] > -0.8)
+            strong_bear = df['VWAP_Dev'] <= -0.8
+            
+            df.loc[strong_bull, 'VWAP_Score'] = 5
+            df.loc[bull, 'VWAP_Score'] = 3
+            df.loc[weak_bull, 'VWAP_Score'] = 1
+            df.loc[weak_bear, 'VWAP_Score'] = -1
+            df.loc[bear, 'VWAP_Score'] = -3
+            df.loc[strong_bear, 'VWAP_Score'] = -5
+            
+            # SAR Scoring (5 points max) - Based on trend direction and position
+            bull_sar = (df['SAR_Trend'] == 1) & (df['Close'] > df['SAR'])
+            bear_sar = (df['SAR_Trend'] == -1) & (df['Close'] < df['SAR'])
+            
+            df.loc[bull_sar, 'SAR_Score'] = 5
+            df.loc[bear_sar, 'SAR_Score'] = -5
+            
+            # ATR Scoring (5 points max) - Higher volatility gets more points
+            df.loc[df['ATR_Pct'] > 1.0, 'ATR_Score'] = 5      # Very high volatility
+            df.loc[(df['ATR_Pct'] > 0.5) & (df['ATR_Pct'] <= 1.0), 'ATR_Score'] = 4   # High volatility
+            df.loc[(df['ATR_Pct'] > 0.2) & (df['ATR_Pct'] <= 0.5), 'ATR_Score'] = 3   # Moderate volatility
+            df.loc[(df['ATR_Pct'] > 0.1) & (df['ATR_Pct'] <= 0.2), 'ATR_Score'] = 2   # Low-moderate volatility
+            df.loc[df['ATR_Pct'] <= 0.1, 'ATR_Score'] = 1     # Low volatility
+            
+            # Price Action Scoring (5 points max)
+            df.loc[df['PA_Trend'] == 1, 'PA_Score'] = 5   # Strong bullish
+            df.loc[df['PA_Trend'] == -1, 'PA_Score'] = -5  # Strong bearish
+            
+            # Calculate Total Score
+            df['Total_Score'] = df['VWAP_Score'] + df['SAR_Score'] + df['ATR_Score'] + df['PA_Score']
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating Dashboard technical indicators: {e}")
+            raise
+    
+    def calculate_dashboard_higher_timeframe_indicators(self, df, bullish_threshold=3, bearish_threshold=-3):
+        """Calculate Dashboard higher timeframe trend indicators with configurable thresholds"""
+        import numpy as np
+        try:
+            if len(df) < 30:  # Further reduced requirement for backtesting
+                raise Exception("Insufficient data for Dashboard higher timeframe analysis")
+            
+            # Fisher Transform calculation
+            def fisher_transform(data, period=10):
+                high_low = (data['High'] + data['Low']) / 2
+                min_low = high_low.rolling(window=period).min()
+                max_high = high_low.rolling(window=period).max()
+                
+                raw_value = 2 * ((high_low - min_low) / (max_high - min_low) - 0.5)
+                raw_value = raw_value.clip(-0.999, 0.999)  # Prevent overflow
+                
+                fisher = 0.5 * np.log((1 + raw_value) / (1 - raw_value))
+                fisher_signal = fisher.shift(1)
+                
+                return fisher, fisher_signal
+            
+            # True Strength Index calculation
+            def true_strength_index(data, r=25, s=13):
+                close_diff = data['Close'].diff()
+                abs_close_diff = close_diff.abs()
+                
+                double_smoothed_pc = close_diff.ewm(span=r).mean().ewm(span=s).mean()
+                double_smoothed_apc = abs_close_diff.ewm(span=r).mean().ewm(span=s).mean()
+                
+                tsi = 100 * (double_smoothed_pc / double_smoothed_apc)
+                return tsi
+            
+            # Pivot Points calculation
+            def calculate_pivot_points(data):
+                # Daily pivot points using previous day's data
+                prev_high = data['High'].shift(1)
+                prev_low = data['Low'].shift(1)
+                prev_close = data['Close'].shift(1)
+                
+                pivot = (prev_high + prev_low + prev_close) / 3
+                r1 = 2 * pivot - prev_low
+                s1 = 2 * pivot - prev_high
+                r2 = pivot + (prev_high - prev_low)
+                s2 = pivot - (prev_high - prev_low)
+                
+                return pivot, r1, s1, r2, s2
+            
+            # Dow Theory analysis
+            def dow_theory_analysis(data, short_period=20, long_period=50):
+                sma_short = data['Close'].rolling(window=short_period).mean()
+                sma_long = data['Close'].rolling(window=long_period).mean()
+                
+                # Higher highs and higher lows for uptrend
+                highs = data['High'].rolling(window=5).max()
+                lows = data['Low'].rolling(window=5).min()
+                
+                higher_highs = highs > highs.shift(5)
+                higher_lows = lows > lows.shift(5)
+                lower_highs = highs < highs.shift(5)
+                lower_lows = lows < lows.shift(5)
+                
+                # Trend classification
+                uptrend = (sma_short > sma_long) & higher_highs & higher_lows
+                downtrend = (sma_short < sma_long) & lower_highs & lower_lows
+                
+                trend_score = pd.Series(index=data.index, dtype=float)
+                trend_score[uptrend] = 1
+                trend_score[downtrend] = -1
+                trend_score = trend_score.fillna(0)
+                
+                return trend_score
+            
+            # Williams Alligator calculation (MISSING FROM ORIGINAL IMPLEMENTATION)
+            def williams_alligator(data):
+                jaw = data['Close'].rolling(window=13).mean().shift(8)   # Blue line
+                teeth = data['Close'].rolling(window=8).mean().shift(5)  # Red line  
+                lips = data['Close'].rolling(window=5).mean().shift(3)   # Green line
+                
+                # Alligator is sleeping when lines are intertwined
+                # Alligator is eating when price is above/below all lines
+                eating_up = (data['Close'] > jaw) & (data['Close'] > teeth) & (data['Close'] > lips)
+                eating_down = (data['Close'] < jaw) & (data['Close'] < teeth) & (data['Close'] < lips)
+                sleeping = ~(eating_up | eating_down)
+                
+                return jaw, teeth, lips, eating_up, eating_down, sleeping
+            
+            # Calculate all indicators
+            fisher, fisher_signal = fisher_transform(df)
+            df['Fisher'] = fisher
+            df['Fisher_Signal'] = fisher_signal
+            
+            df['TSI'] = true_strength_index(df)
+            
+            pivot, r1, s1, r2, s2 = calculate_pivot_points(df)
+            df['Pivot'] = pivot
+            df['R1'] = r1
+            df['S1'] = s1
+            df['R2'] = r2
+            df['S2'] = s2
+            
+            df['Dow_Theory'] = dow_theory_analysis(df)
+            
+            # Williams Alligator indicators
+            jaw, teeth, lips, eating_up, eating_down, sleeping = williams_alligator(df)
+            df['Alligator_Jaw'] = jaw
+            df['Alligator_Teeth'] = teeth
+            df['Alligator_Lips'] = lips
+            df['Alligator_EatingUp'] = eating_up
+            df['Alligator_EatingDown'] = eating_down
+            df['Alligator_Sleeping'] = sleeping
+            
+            # Combined trend strength calculation (Dashboard's exact logic)
+            df['Trend_Score'] = 0
+            
+            # Fisher Transform scoring (weight: 25%)
+            fisher_bull = (df['Fisher'] > df['Fisher_Signal']) & (df['Fisher'] > 0)
+            fisher_bear = (df['Fisher'] < df['Fisher_Signal']) & (df['Fisher'] < 0)
+            df.loc[fisher_bull, 'Trend_Score'] += 1
+            df.loc[fisher_bear, 'Trend_Score'] -= 1
+            
+            # TSI scoring (weight: 25%)
+            df.loc[df['TSI'] > 25, 'Trend_Score'] += 1
+            df.loc[df['TSI'] < -25, 'Trend_Score'] -= 1
+            
+            # Pivot Points scoring (weight: 25%)
+            above_r1 = df['Close'] > df['R1']
+            below_s1 = df['Close'] < df['S1']
+            df.loc[above_r1, 'Trend_Score'] += 1
+            df.loc[below_s1, 'Trend_Score'] -= 1
+            
+            # Dow Theory scoring (weight: 25%)
+            df['Trend_Score'] += df['Dow_Theory']
+            
+            
+            # Williams Alligator scoring (EXACT DASHBOARD LOGIC)
+            alligator_eating_up = df['Alligator_EatingUp']
+            alligator_eating_down = df['Alligator_EatingDown']
+            
+            # Current eating state (3 points)
+            df.loc[alligator_eating_up, 'Trend_Score'] += 3
+            df.loc[alligator_eating_down, 'Trend_Score'] -= 3
+            
+            # Recently eating up (waking up - 1 point) - check last 3 periods
+            for i in range(len(df)):
+                if i >= 3:  # Need at least 3 periods of history
+                    recent_eating_up = df['Alligator_EatingUp'].iloc[max(0, i-3):i].sum()
+                    recent_eating_down = df['Alligator_EatingDown'].iloc[max(0, i-3):i].sum()
+                    
+                    if recent_eating_up >= 2 and not df['Alligator_EatingUp'].iloc[i]:  # Waking Up
+                        df.iloc[i, df.columns.get_loc('Trend_Score')] += 1
+                    elif recent_eating_down >= 2 and not df['Alligator_EatingDown'].iloc[i]:  # Waking Down
+                        df.iloc[i, df.columns.get_loc('Trend_Score')] -= 1
+            
+            # Final trend direction classification
+            df['Trend_Direction'] = 'NEUTRAL'
+            df['Trend_Strength'] = abs(df['Trend_Score'])
+            
+            # Use configurable thresholds for trend classification
+            strong_bullish = df['Trend_Score'] >= bullish_threshold
+            strong_bearish = df['Trend_Score'] <= bearish_threshold
+            
+            df.loc[strong_bullish, 'Trend_Direction'] = 'Bullish'
+            df.loc[strong_bearish, 'Trend_Direction'] = 'Bearish'
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating Dashboard higher timeframe indicators: {e}")
+            raise
+    
+    def generate_dashboard_signals(self, df_3m, df_1h, config):
+        """Generate Dashboard-style trading signals with exact same logic as app.py"""
+        try:
+            # Get latest 3M data with indicators
+            latest_3m = df_3m.iloc[-1]
+            
+            # Extract scoring data
+            scoring = {
+                'vwap_score': int(latest_3m.get('VWAP_Score') if hasattr(latest_3m, 'get') else latest_3m['VWAP_Score']) if 'VWAP_Score' in latest_3m else 0,
+                'sar_score': int(latest_3m.get('SAR_Score') if hasattr(latest_3m, 'get') else latest_3m['SAR_Score']) if 'SAR_Score' in latest_3m else 0,
+                'atr_score': int(latest_3m.get('ATR_Score') if hasattr(latest_3m, 'get') else latest_3m['ATR_Score']) if 'ATR_Score' in latest_3m else 0,
+                'pa_score': int(latest_3m.get('PA_Score') if hasattr(latest_3m, 'get') else latest_3m['PA_Score']) if 'PA_Score' in latest_3m else 0,
+                'total_score': int(latest_3m.get('Total_Score') if hasattr(latest_3m, 'get') else latest_3m['Total_Score']) if 'Total_Score' in latest_3m else 0
+            }
+            
+            # Get thresholds from config
+            futures_config = config.get('futures_strategy', {})
+            long_threshold = futures_config.get('long_signal_threshold', 5)
+            short_threshold = futures_config.get('short_signal_threshold', -7)
+            trend_bullish_threshold = futures_config.get('trend_bullish_threshold', 3)
+            trend_bearish_threshold = futures_config.get('trend_bearish_threshold', -3)
+            
+            # Get 1H trend analysis
+            latest_1h = df_1h.iloc[-1]
+            trend_direction = latest_1h.get('Trend_Direction', 'NEUTRAL')
+            trend_score = int(latest_1h.get('Trend_Strength', 0))
+            
+            # Decision logic: Signal only triggers when 1H trend aligns with 3M signal direction
+            signals_3m_score = scoring['total_score']
+            
+            trade_decision = 'NO_TRADE'
+            decision_reasoning = 'No qualifying signal'
+            signal_strength = abs(signals_3m_score)
+            signal_type = 'NONE'
+            
+            # Check for LONG signal (Dashboard's exact logic)
+            if signals_3m_score >= long_threshold:
+                if trend_direction == 'Bullish':
+                    trade_decision = 'LONG_FUTURES'
+                    signal_type = 'LONG'
+                    decision_reasoning = f'3M score ({signals_3m_score}) ≥ Long threshold ({long_threshold}) AND 1H trend is Bullish. Trend alignment confirmed.'
+                elif trend_direction == 'Neutral':
+                    trade_decision = 'LONG_FUTURES'
+                    signal_type = 'LONG'
+                    decision_reasoning = f'3M score ({signals_3m_score}) ≥ Long threshold ({long_threshold}) AND 1H trend is Neutral. Weak trend allows signal.'
+                else:  # Bearish
+                    trade_decision = 'NO_TRADE'
+                    decision_reasoning = f'3M score ({signals_3m_score}) suggests LONG but 1H trend is Bearish. No trend alignment - signal blocked.'
+            
+            # Check for SHORT signal (Dashboard's exact logic)
+            elif signals_3m_score <= short_threshold:
+                if trend_direction == 'Bearish':
+                    trade_decision = 'SHORT_FUTURES'
+                    signal_type = 'SHORT'
+                    decision_reasoning = f'3M score ({signals_3m_score}) ≤ Short threshold ({short_threshold}) AND 1H trend is Bearish. Trend alignment confirmed.'
+                elif trend_direction == 'Neutral':
+                    trade_decision = 'SHORT_FUTURES'
+                    signal_type = 'SHORT'
+                    decision_reasoning = f'3M score ({signals_3m_score}) ≤ Short threshold ({short_threshold}) AND 1H trend is Neutral. Weak trend allows signal.'
+                else:  # Bullish
+                    trade_decision = 'NO_TRADE'
+                    decision_reasoning = f'3M score ({signals_3m_score}) suggests SHORT but 1H trend is Bullish. No trend alignment - signal blocked.'
+            
+            # No directional signal from 3M
+            else:
+                if trend_direction == 'Neutral' and abs(signals_3m_score) < 3:
+                    trade_decision = 'NEUTRAL_STRATEGY'
+                    decision_reasoning = f'3M score ({signals_3m_score}) between thresholds and 1H trend is Neutral. Consider neutral strategy.'
+                else:
+                    trade_decision = 'NO_TRADE'
+                    decision_reasoning = f'3M score ({signals_3m_score}) between thresholds ({short_threshold} to {long_threshold}). No directional signal.'
+            
+            # Return signal in same format as existing strategy
+            signal_value = 0
+            if signal_type == 'LONG':
+                signal_value = 1
+            elif signal_type == 'SHORT':
+                signal_value = -1
+            
+            return {
+                'signal': signal_value,
+                'strength': signal_strength,
+                'type': signal_type,
+                'trade_decision': trade_decision,
+                'decision_reasoning': decision_reasoning,
+                '1h_trend': trend_direction,
+                '1h_trend_score': trend_score,
+                '3m_total_score': signals_3m_score,
+                '3m_scoring_breakdown': scoring,
+                'thresholds': {
+                    'long_threshold': long_threshold,
+                    'short_threshold': short_threshold,
+                    'trend_bullish_threshold': trend_bullish_threshold,
+                    'trend_bearish_threshold': trend_bearish_threshold
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating Dashboard signals: {e}")
+            return {'signal': 0, 'strength': 0, 'type': 'NONE', 'error': str(e)}
 
 # Example usage
 if __name__ == "__main__":

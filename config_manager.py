@@ -89,7 +89,9 @@ min_time_between_neutral_trades = 7200"""
                 'min_signal_strength': self.config.getint('FUTURES_STRATEGY', 'min_signal_strength', fallback=4),
                 'require_trend_alignment': self.config.getboolean('FUTURES_STRATEGY', 'require_trend_alignment', fallback=True),
                 'min_trend_strength': self.config.getint('FUTURES_STRATEGY', 'min_trend_strength', fallback=5),
-                'min_time_between_trades': self.config.getint('FUTURES_STRATEGY', 'min_time_between_trades', fallback=3600)
+                'min_time_between_trades': self.config.getint('FUTURES_STRATEGY', 'min_time_between_trades', fallback=3600),
+                'trend_bullish_threshold': self.config.getint('FUTURES_STRATEGY', 'trend_bullish_threshold', fallback=3),
+                'trend_bearish_threshold': self.config.getint('FUTURES_STRATEGY', 'trend_bearish_threshold', fallback=-3)
             },
             
             # Neutral Strategy
@@ -118,6 +120,24 @@ min_time_between_neutral_trades = 7200"""
             
             # Currency Conversion
             'USD': self.config.getfloat('DOLLAR_COVERSION_FACTOR', 'USD', fallback=85.0),
+            
+            # Trading Timing Configuration
+            'trading_timing': {
+                'trading_start_time': self.config.get('TRADING_TIMING', 'trading_start_time', fallback='17:30'),
+                'timezone': self.config.get('TRADING_TIMING', 'timezone', fallback='Asia/Kolkata')
+            },
+            
+            # ATR-Based Exits Configuration
+            'atr_exits': {
+                'enabled': self.config.getboolean('ATR_EXITS', 'enabled', fallback=False),
+                'atr_period': self.config.getint('ATR_EXITS', 'atr_period', fallback=14),
+                'stop_loss_atr_multiplier': self.config.getfloat('ATR_EXITS', 'stop_loss_atr_multiplier', fallback=2.0),
+                'take_profit_atr_multiplier': self.config.getfloat('ATR_EXITS', 'take_profit_atr_multiplier', fallback=3.0),
+                'trailing_atr_multiplier': self.config.getfloat('ATR_EXITS', 'trailing_atr_multiplier', fallback=1.5),
+                'buffer_zone_atr_multiplier': self.config.getfloat('ATR_EXITS', 'buffer_zone_atr_multiplier', fallback=0.3),
+                'volume_threshold_percentile': self.config.getfloat('ATR_EXITS', 'volume_threshold_percentile', fallback=70),
+                'hunting_zone_offset': self.config.getfloat('ATR_EXITS', 'hunting_zone_offset', fallback=5)
+            },
             
             # Logging Configuration
             'logging': {
@@ -164,6 +184,8 @@ min_time_between_neutral_trades = 7200"""
             self.config.set('FUTURES_STRATEGY', 'require_trend_alignment', str(futures.get('require_trend_alignment', True)).lower())
             self.config.set('FUTURES_STRATEGY', 'min_trend_strength', str(futures.get('min_trend_strength', 5)))
             self.config.set('FUTURES_STRATEGY', 'min_time_between_trades', str(futures.get('min_time_between_trades', 3600)))
+            self.config.set('FUTURES_STRATEGY', 'trend_bullish_threshold', str(futures.get('trend_bullish_threshold', 3)))
+            self.config.set('FUTURES_STRATEGY', 'trend_bearish_threshold', str(futures.get('trend_bearish_threshold', -3)))
             
             # Add Neutral Strategy
             self.config.add_section('NEUTRAL_STRATEGY')
@@ -188,6 +210,24 @@ min_time_between_neutral_trades = 7200"""
             self.config.set('DOLLAR_BASED_RISK', 'quick_profit_usd', str(dollar_risk.get('quick_profit_usd', 60.0)))
             self.config.set('DOLLAR_BASED_RISK', 'max_risk_usd', str(dollar_risk.get('max_risk_usd', 150.0)))
             self.config.set('DOLLAR_BASED_RISK', 'daily_loss_limit_usd', str(dollar_risk.get('daily_loss_limit_usd', 500.0)))
+            
+            # Add Trading Timing Configuration
+            self.config.add_section('TRADING_TIMING')
+            trading_timing = config_data.get('trading_timing', {})
+            self.config.set('TRADING_TIMING', 'trading_start_time', str(trading_timing.get('trading_start_time', '17:30')))
+            self.config.set('TRADING_TIMING', 'timezone', str(trading_timing.get('timezone', 'Asia/Kolkata')))
+            
+            # Add ATR Exits Configuration
+            self.config.add_section('ATR_EXITS')
+            atr_exits = config_data.get('atr_exits', {})
+            self.config.set('ATR_EXITS', 'enabled', str(atr_exits.get('enabled', False)).lower())
+            self.config.set('ATR_EXITS', 'atr_period', str(atr_exits.get('atr_period', 14)))
+            self.config.set('ATR_EXITS', 'stop_loss_atr_multiplier', str(atr_exits.get('stop_loss_atr_multiplier', 2.0)))
+            self.config.set('ATR_EXITS', 'take_profit_atr_multiplier', str(atr_exits.get('take_profit_atr_multiplier', 3.0)))
+            self.config.set('ATR_EXITS', 'trailing_atr_multiplier', str(atr_exits.get('trailing_atr_multiplier', 1.5)))
+            self.config.set('ATR_EXITS', 'buffer_zone_atr_multiplier', str(atr_exits.get('buffer_zone_atr_multiplier', 0.3)))
+            self.config.set('ATR_EXITS', 'volume_threshold_percentile', str(atr_exits.get('volume_threshold_percentile', 70)))
+            self.config.set('ATR_EXITS', 'hunting_zone_offset', str(atr_exits.get('hunting_zone_offset', 5)))
             
             # Add Logging Configuration
             self.config.add_section('LOGGING')

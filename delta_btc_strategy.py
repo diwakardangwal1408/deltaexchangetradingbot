@@ -398,23 +398,41 @@ class DeltaBTCOptionsTrader:
             
             if order_result.get('success'):
                 trade_id = f"trade_{int(time.time())}"
+                entry_price = best_contract['price']
+                side = best_contract['side']
+                
+                # Calculate exit levels using same logic as backtest
+                exit_levels = self._calculate_live_exit_levels(entry_price, side, quantity)
                 
                 trade_info = {
+                    'id': trade_id,
                     'trade_id': trade_id,
                     'symbol': best_contract['symbol'],
                     'signal': signal_data['signal'],
                     'entry_type': signal_data['entry_type'],
                     'contracts': quantity,
-                    'entry_price': best_contract['price'],
-                    'side': best_contract['side'],
+                    'position_size': quantity,
+                    'entry_price': entry_price,
+                    'side': side,
+                    'type': 'futures',  # Mark as futures position
                     'strategy': 'directional_futures',
                     'entry_time': datetime.now(),
                     'signal_strength': signal_data['strength'],
                     'confidence': signal_data['confidence'],
                     'order_id': order_result['result'].get('id'),
-                    'total_cost': quantity * best_contract['price'],
+                    'total_cost': quantity * entry_price,
                     'leverage': leverage,
-                    'status': 'open'
+                    'status': 'open',
+                    # Exit levels from config
+                    'stop_loss': exit_levels['stop_loss'],
+                    'take_profit': exit_levels['take_profit'],
+                    'quick_profit': exit_levels['quick_profit'],
+                    'trailing_distance': exit_levels.get('trailing_distance'),
+                    'use_atr_exits': exit_levels.get('use_atr_exits', False),
+                    'atr_value': exit_levels.get('atr_value', 0),
+                    'high_water_mark': entry_price if side == 'long' else None,
+                    'low_water_mark': entry_price if side == 'short' else None,
+                    'fees': 0  # Update based on actual fees from Delta
                 }
                 
                 self.current_positions[trade_id] = trade_info
@@ -440,50 +458,23 @@ class DeltaBTCOptionsTrader:
             return None
     
     async def monitor_positions(self):
-        """Monitor open positions for exit conditions"""
+        """Monitor ALL open positions (futures and options) for exit conditions"""
         positions_to_close = []
         
         for trade_id, position in self.current_positions.items():
             try:
-                # Get current option price
-                orderbook = self.delta_client.get_orderbook(position['symbol'])
-                if not orderbook or not orderbook.get('buy'):
-                    continue
+                position_type = position.get('type', 'option')  # 'futures' or 'option'
                 
-                current_price = float(orderbook['buy'][0]['price'])  # Bid price for selling
-                
-                # Calculate P&L
-                entry_price = position['entry_price']
-                contracts = position['contracts']
-                pnl = (current_price - entry_price) * contracts
-                pnl_pct = (current_price - entry_price) / entry_price * 100
-                
-                # Check exit conditions
-                time_in_position = (datetime.now() - position['entry_time']).total_seconds() / 3600  # hours
-                
-                exit_reason = None
-                
-                # Time-based exit (close before expiry)
-                if time_in_position >= 20:  # Close 4 hours before daily expiry
-                    exit_reason = "Time exit (approaching expiry)"
-                
-                # Dollar-based profit target
-                elif pnl >= self.take_profit_usd:
-                    exit_reason = f"Take profit target (${self.take_profit_usd})"
-                
-                # Dollar-based stop loss
-                elif pnl <= -self.stop_loss_usd:
-                    exit_reason = f"Stop loss (${self.stop_loss_usd})"
-                
-                # Dollar-based quick profit (in first hour)
-                elif time_in_position <= 1 and pnl >= self.quick_profit_usd:
-                    exit_reason = f"Quick profit (${self.quick_profit_usd} in 1 hour)"
-                
-                if exit_reason:
-                    positions_to_close.append((trade_id, exit_reason, current_price, pnl))
+                if position_type == 'futures':
+                    # Monitor futures position
+                    exit_info = await self._check_futures_exit(trade_id, position)
+                    if exit_info:
+                        positions_to_close.append(exit_info)
                 else:
-                    # Log position status
-                    self.logger.info(f"Position {trade_id}: {position['symbol']} - P&L: ${pnl:.2f} ({pnl_pct:.1f}%) - Time: {time_in_position:.1f}h")
+                    # Monitor options position
+                    exit_info = await self._check_options_exit(trade_id, position)
+                    if exit_info:
+                        positions_to_close.append(exit_info)
             
             except Exception as e:
                 self.logger.error(f"Error monitoring position {trade_id}: {e}")
@@ -491,6 +482,228 @@ class DeltaBTCOptionsTrader:
         # Close positions that meet exit criteria
         for trade_id, reason, exit_price, pnl in positions_to_close:
             await self.close_position(trade_id, reason, exit_price, pnl)
+    
+    async def _check_futures_exit(self, trade_id, position):
+        """Check exit conditions for futures positions"""
+        try:
+            # Get current BTC price
+            current_price = self.delta_client.get_current_btc_price()
+            if not current_price:
+                return None
+            
+            # Calculate P&L
+            entry_price = position['entry_price']
+            position_size = position['position_size']
+            side = position['side']
+            
+            if side == 'long':
+                pnl = (current_price - entry_price) * position_size
+            else:  # short
+                pnl = (entry_price - current_price) * position_size
+            
+            pnl -= position.get('fees', 0)
+            
+            # Check exit conditions in priority order
+            exit_reason = None
+            
+            # Priority 1: Max Risk Hit
+            if pnl <= -self.max_risk_usd:
+                exit_reason = f"Max Risk Hit (${abs(pnl):.2f})"
+            
+            # Priority 2: Stop Loss
+            elif side == 'long' and current_price <= position['stop_loss']:
+                exit_reason = f"Stop Loss Hit at ${current_price:.2f}"
+            elif side == 'short' and current_price >= position['stop_loss']:
+                exit_reason = f"Stop Loss Hit at ${current_price:.2f}"
+            
+            # Priority 3: Take Profit
+            elif side == 'long' and current_price >= position['take_profit']:
+                exit_reason = f"Take Profit Hit at ${current_price:.2f}"
+            elif side == 'short' and current_price <= position['take_profit']:
+                exit_reason = f"Take Profit Hit at ${current_price:.2f}"
+            
+            # Priority 4: Quick Profit
+            elif side == 'long' and current_price >= position.get('quick_profit', float('inf')):
+                exit_reason = f"Quick Profit Hit at ${current_price:.2f}"
+            elif side == 'short' and current_price <= position.get('quick_profit', 0):
+                exit_reason = f"Quick Profit Hit at ${current_price:.2f}"
+            
+            # Update trailing stop if no exit
+            if not exit_reason:
+                self._update_trailing_stop(position, current_price)
+                
+                # Check if trailing stop hit
+                if side == 'long' and current_price <= position['stop_loss']:
+                    exit_reason = f"Trailing Stop Hit at ${current_price:.2f}"
+                elif side == 'short' and current_price >= position['stop_loss']:
+                    exit_reason = f"Trailing Stop Hit at ${current_price:.2f}"
+            
+            if exit_reason:
+                return (trade_id, exit_reason, current_price, pnl)
+            else:
+                # Log position status
+                self.logger.debug(f"Futures {trade_id}: {side} @ ${entry_price:.2f} - Current: ${current_price:.2f} - P&L: ${pnl:.2f}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error checking futures exit for {trade_id}: {e}")
+            return None
+    
+    async def _check_options_exit(self, trade_id, position):
+        """Check exit conditions for options positions"""
+        try:
+            # Get current option price
+            orderbook = self.delta_client.get_orderbook(position['symbol'])
+            if not orderbook or not orderbook.get('buy'):
+                return None
+            
+            current_price = float(orderbook['buy'][0]['price'])  # Bid price for selling
+            
+            # Calculate P&L
+            entry_price = position['entry_price']
+            contracts = position['contracts']
+            pnl = (current_price - entry_price) * contracts
+            pnl_pct = (current_price - entry_price) / entry_price * 100
+            
+            # Check exit conditions
+            time_in_position = (datetime.now() - position['entry_time']).total_seconds() / 3600  # hours
+            
+            exit_reason = None
+            
+            # Time-based exit (close before expiry)
+            if time_in_position >= 20:  # Close 4 hours before daily expiry
+                exit_reason = "Time exit (approaching expiry)"
+            
+            # Dollar-based profit target
+            elif pnl >= self.take_profit_usd:
+                exit_reason = f"Take profit target (${self.take_profit_usd})"
+            
+            # Dollar-based stop loss
+            elif pnl <= -self.stop_loss_usd:
+                exit_reason = f"Stop loss (${self.stop_loss_usd})"
+            
+            # Dollar-based quick profit (in first hour)
+            elif time_in_position <= 1 and pnl >= self.quick_profit_usd:
+                exit_reason = f"Quick profit (${self.quick_profit_usd} in 1 hour)"
+            
+            if exit_reason:
+                return (trade_id, exit_reason, current_price, pnl)
+            else:
+                # Log position status
+                self.logger.debug(f"Option {trade_id}: {position['symbol']} - P&L: ${pnl:.2f} ({pnl_pct:.1f}%) - Time: {time_in_position:.1f}h")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error checking options exit for {trade_id}: {e}")
+            return None
+    
+    def _update_trailing_stop(self, position, current_price):
+        """Update trailing stop for futures positions"""
+        try:
+            side = position['side']
+            
+            if side == 'long':
+                # Update high water mark
+                if 'high_water_mark' not in position:
+                    position['high_water_mark'] = position['entry_price']
+                
+                if current_price > position['high_water_mark']:
+                    position['high_water_mark'] = current_price
+                    
+                    # Move stop loss up
+                    if position.get('use_atr_exits'):
+                        new_stop = current_price - position.get('trailing_distance', self.trailing_stop_usd)
+                    else:
+                        new_stop = current_price - (self.trailing_stop_usd / position['position_size'])
+                    
+                    position['stop_loss'] = max(position['stop_loss'], new_stop)
+                    self.logger.debug(f"Updated trailing stop for {position['id']}: ${position['stop_loss']:.2f}")
+                    
+            else:  # short
+                # Update low water mark  
+                if 'low_water_mark' not in position:
+                    position['low_water_mark'] = position['entry_price']
+                
+                if current_price < position['low_water_mark']:
+                    position['low_water_mark'] = current_price
+                    
+                    # Move stop loss down
+                    if position.get('use_atr_exits'):
+                        new_stop = current_price + position.get('trailing_distance', self.trailing_stop_usd)
+                    else:
+                        new_stop = current_price + (self.trailing_stop_usd / position['position_size'])
+                    
+                    position['stop_loss'] = min(position['stop_loss'], new_stop)
+                    self.logger.debug(f"Updated trailing stop for {position['id']}: ${position['stop_loss']:.2f}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error updating trailing stop: {e}")
+    
+    def _calculate_live_exit_levels(self, entry_price, side, position_size):
+        """Calculate exit levels for live trading using same logic as backtest"""
+        try:
+            # Get ATR configuration
+            atr_config = self.config.get('atr_exits', {})
+            use_atr = atr_config.get('enabled', False)
+            
+            if use_atr:
+                # For live trading, we'll use a simplified ATR calculation
+                # In a full implementation, you'd get recent candle data and calculate ATR
+                # For now, use a reasonable default ATR value
+                estimated_atr = entry_price * 0.02  # 2% of price as estimated ATR
+                
+                stop_multiplier = float(atr_config.get('stop_loss_atr_multiplier', 2.0))
+                profit_multiplier = float(atr_config.get('take_profit_atr_multiplier', 3.0))
+                trail_multiplier = float(atr_config.get('trailing_atr_multiplier', 1.5))
+                
+                if side == 'long':
+                    stop_loss = entry_price - (estimated_atr * stop_multiplier)
+                    take_profit = entry_price + (estimated_atr * profit_multiplier)
+                    quick_profit = entry_price + (estimated_atr * (profit_multiplier * 0.6))
+                else:  # short
+                    stop_loss = entry_price + (estimated_atr * stop_multiplier)
+                    take_profit = entry_price - (estimated_atr * profit_multiplier)
+                    quick_profit = entry_price - (estimated_atr * (profit_multiplier * 0.6))
+                
+                return {
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'quick_profit': quick_profit,
+                    'trailing_distance': estimated_atr * trail_multiplier,
+                    'use_atr_exits': True,
+                    'atr_value': estimated_atr
+                }
+            else:
+                # Use dollar-based exits
+                if side == 'long':
+                    stop_loss = entry_price - (self.stop_loss_usd / position_size)
+                    take_profit = entry_price + (self.take_profit_usd / position_size)
+                    quick_profit = entry_price + (self.quick_profit_usd / position_size)
+                else:  # short
+                    stop_loss = entry_price + (self.stop_loss_usd / position_size)
+                    take_profit = entry_price - (self.take_profit_usd / position_size)
+                    quick_profit = entry_price - (self.quick_profit_usd / position_size)
+                
+                return {
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'quick_profit': quick_profit,
+                    'trailing_distance': self.trailing_stop_usd / position_size,
+                    'use_atr_exits': False,
+                    'atr_value': 0
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Error calculating exit levels: {e}")
+            # Fallback to conservative dollar-based
+            return {
+                'stop_loss': entry_price * 0.95 if side == 'long' else entry_price * 1.05,
+                'take_profit': entry_price * 1.05 if side == 'long' else entry_price * 0.95,
+                'quick_profit': entry_price * 1.02 if side == 'long' else entry_price * 0.98,
+                'trailing_distance': entry_price * 0.01,
+                'use_atr_exits': False,
+                'atr_value': 0
+            }
     
     async def close_position(self, trade_id, reason, exit_price, pnl):
         """Close a position"""
@@ -1022,8 +1235,8 @@ class DeltaBTCOptionsTrader:
                 # Save state
                 self.save_state()
                 
-                # Wait before next iteration
-                await asyncio.sleep(60)  # Check every minute
+                # Wait before next iteration - check positions more frequently
+                await asyncio.sleep(30)  # Check every 30 seconds for better exit management
                 
             except KeyboardInterrupt:
                 self.logger.info("Trading loop interrupted by user")
