@@ -254,9 +254,29 @@
                             <span id="progressText">Initializing backtest...</span>
                             <span id="progressPercent">0%</span>
                         </div>
-                        <div class="progress">
+                        <div class="progress mb-2">
                             <div class="progress-bar progress-bar-striped progress-bar-animated" 
                                  role="progressbar" style="width: 0%" id="progressBar"></div>
+                        </div>
+                        <div class="row" id="progressDetails" style="display: none;">
+                            <div class="col-md-4">
+                                <small class="text-muted">
+                                    <i class="bi bi-speedometer2"></i> 
+                                    <span id="processingRate">0 candles/sec</span>
+                                </small>
+                            </div>
+                            <div class="col-md-4">
+                                <small class="text-muted">
+                                    <i class="bi bi-briefcase"></i> 
+                                    <span id="currentPositions">0 positions</span>
+                                </small>
+                            </div>
+                            <div class="col-md-4">
+                                <small class="text-muted">
+                                    <i class="bi bi-clock"></i> 
+                                    ETA: <span id="estimatedTime">calculating...</span>
+                                </small>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -485,16 +505,71 @@
         let equityChart = null;
         let tradeDistributionChart = null;
 
-        // Set default dates (3 months ago to today)
+        // Initialize date pickers with available range
         document.addEventListener('DOMContentLoaded', function() {
-            const today = new Date();
-            const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate());
-            
-            document.getElementById('fromDate').valueAsDate = threeMonthsAgo;
-            document.getElementById('toDate').valueAsDate = today;
-            
+            initializeDatePickers();
             loadCurrentSettings();
         });
+        
+        // Initialize date pickers with available data range
+        async function initializeDatePickers() {
+            try {
+                const response = await fetch('/api/data/available-range');
+                const result = await response.json();
+                
+                if (result.success && result.available_range.start_date && result.available_range.end_date) {
+                    const startDate = result.available_range.start_date;
+                    const endDate = result.available_range.end_date;
+                    
+                    // Set date picker limits
+                    const fromDateInput = document.getElementById('fromDate');
+                    const toDateInput = document.getElementById('toDate');
+                    
+                    fromDateInput.min = startDate;
+                    fromDateInput.max = endDate;
+                    toDateInput.min = startDate;
+                    toDateInput.max = endDate;
+                    
+                    // Set default values to last month of available data
+                    const endDateObj = new Date(endDate);
+                    const startOfLastMonth = new Date(endDateObj);
+                    startOfLastMonth.setMonth(endDateObj.getMonth() - 1);
+                    
+                    // Ensure start date is not before available data
+                    const actualStartDate = startOfLastMonth > new Date(startDate) ? 
+                        startOfLastMonth.toISOString().split('T')[0] : startDate;
+                    
+                    fromDateInput.value = actualStartDate;
+                    toDateInput.value = endDate;
+                    
+                    // Show available range to user
+                    const rangeInfo = document.createElement('small');
+                    rangeInfo.className = 'text-muted';
+                    rangeInfo.innerHTML = `Available data: ${startDate} to ${endDate}`;
+                    document.getElementById('fromDate').parentNode.appendChild(rangeInfo);
+                    
+                    console.log(`Data available from ${startDate} to ${endDate}`);
+                } else {
+                    console.warn('Could not get available date range, using fallback defaults');
+                    // Fallback to default dates
+                    const today = new Date();
+                    const oneMonthAgo = new Date(today);
+                    oneMonthAgo.setMonth(today.getMonth() - 1);
+                    
+                    document.getElementById('fromDate').value = oneMonthAgo.toISOString().split('T')[0];
+                    document.getElementById('toDate').value = today.toISOString().split('T')[0];
+                }
+            } catch (error) {
+                console.error('Error initializing date pickers:', error);
+                // Fallback to default dates
+                const today = new Date();
+                const oneMonthAgo = new Date(today);
+                oneMonthAgo.setMonth(today.getMonth() - 1);
+                
+                document.getElementById('fromDate').value = oneMonthAgo.toISOString().split('T')[0];
+                document.getElementById('toDate').value = today.toISOString().split('T')[0];
+            }
+        }
 
         // Load current settings from config
         async function loadCurrentSettings() {
@@ -628,10 +703,39 @@
         }
 
         // Update progress
-        function updateProgress(step, progress) {
+        function updateProgress(step, progress, details = null, etaMinutes = null) {
             document.getElementById('progressText').textContent = step;
             document.getElementById('progressPercent').textContent = Math.round(progress) + '%';
             document.getElementById('progressBar').style.width = progress + '%';
+            
+            // Show detailed progress if available
+            if (details && step.includes('Processing candles')) {
+                document.getElementById('progressDetails').style.display = 'block';
+                
+                // Parse details like "25.3 candles/sec, 2 positions"
+                const parts = details.split(', ');
+                if (parts.length >= 1) {
+                    document.getElementById('processingRate').textContent = parts[0];
+                }
+                if (parts.length >= 2) {
+                    document.getElementById('currentPositions').textContent = parts[1];
+                }
+                
+                // Update ETA
+                if (etaMinutes !== null && etaMinutes > 0) {
+                    if (etaMinutes > 60) {
+                        const hours = Math.floor(etaMinutes / 60);
+                        const minutes = Math.round(etaMinutes % 60);
+                        document.getElementById('estimatedTime').textContent = `${hours}h ${minutes}m`;
+                    } else {
+                        document.getElementById('estimatedTime').textContent = `${Math.round(etaMinutes)}m`;
+                    }
+                } else {
+                    document.getElementById('estimatedTime').textContent = 'calculating...';
+                }
+            } else {
+                document.getElementById('progressDetails').style.display = 'none';
+            }
         }
 
         // Display results

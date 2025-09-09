@@ -15,6 +15,7 @@ from btc_multi_timeframe_strategy import BTCMultiTimeframeStrategy
 from config_manager import config_manager
 from logger_config import get_logger
 from candle_timing import is_candle_closed, get_last_candle_close_time, seconds_until_next_candle_close, format_candle_times_display
+from data_manager import get_data_manager
 
 # Global indicator caches based on proper candle timing
 _indicator_cache = {
@@ -33,6 +34,28 @@ _indicator_cache = {
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'  # Change this to a random secret key
+
+# Initialize historical data on startup
+def initialize_data_on_startup():
+    """Initialize historical data in background thread"""
+    try:
+        print("Initializing historical data for fast backtesting...")
+        data_manager = get_data_manager()
+        
+        # Ensure data is available and fresh
+        if data_manager.ensure_data_available():
+            print("Historical data loaded successfully into memory")
+            # Start background updates
+            data_manager.start_background_updates(update_interval_minutes=1440)  # Daily updates
+            print("Background data updates started")
+        else:
+            print("Failed to load historical data")
+    except Exception as e:
+        print(f"Error initializing data: {e}")
+
+# Start data initialization in background thread
+data_init_thread = threading.Thread(target=initialize_data_on_startup, daemon=True)
+data_init_thread.start()
 
 # Initialize logger for Flask app
 try:
@@ -1883,13 +1906,34 @@ def api_backtest_run():
                 yield f"data: {json.dumps({'step': 'Data fetched successfully', 'progress': 30})}\n\n"
                 
                 # Run backtest with progress updates
-                def backtest_progress(progress_info):
-                    pass  # We'll handle progress inline
+                progress_queue = []
                 
-                yield f"data: {json.dumps({'step': 'Analyzing historical candles', 'progress': 40})}\n\n"
-                yield f"data: {json.dumps({'step': 'Generating trading signals', 'progress': 50})}\n\n"
-                yield f"data: {json.dumps({'step': 'Simulating trade execution', 'progress': 70})}\n\n"
-                results = engine.run_backtest(historical_data)
+                def backtest_progress(progress_info):
+                    # Enhanced progress with details
+                    step = progress_info.get('step', 'Processing...')
+                    progress = progress_info.get('progress', 0)
+                    details = progress_info.get('details')
+                    eta_minutes = progress_info.get('eta_minutes')
+                    
+                    progress_data = {
+                        'step': step,
+                        'progress': progress
+                    }
+                    if details:
+                        progress_data['details'] = details
+                    if eta_minutes is not None:
+                        progress_data['eta_minutes'] = eta_minutes
+                    
+                    progress_queue.append(f"data: {json.dumps(progress_data)}\n\n")
+                
+                yield f"data: {json.dumps({'step': 'Starting candle analysis', 'progress': 40})}\n\n"
+                
+                # Run backtest with real progress callback
+                results = engine.run_backtest(historical_data, progress_callback=backtest_progress)
+                
+                # Yield any queued progress updates
+                for progress_msg in progress_queue:
+                    yield progress_msg
                 
                 yield f"data: {json.dumps({'step': 'Calculating performance metrics', 'progress': 90})}\n\n"
                 
@@ -2014,6 +2058,25 @@ def api_backtest_run():
     response.headers['Access-Control-Allow-Origin'] = '*'
     return response
 
+@app.route('/api/data/available-range', methods=['GET'])
+def api_get_available_date_range():
+    """Get available date range for backtesting"""
+    try:
+        data_manager = get_data_manager()
+        date_range = data_manager.get_available_date_range()
+        
+        return jsonify({
+            'success': True,
+            'available_range': date_range
+        })
+        
+    except Exception as e:
+        app_logger.error(f"Error getting available date range: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
 @app.route('/api/backtest/debug', methods=['POST'])
 def api_backtest_debug():
     """Debug non-streaming backtest for troubleshooting"""
@@ -2025,15 +2088,48 @@ def api_backtest_debug():
         if not from_date or not to_date:
             return {'success': False, 'error': 'Missing date parameters'}
         
+        # Validate date range against available data
+        data_manager = get_data_manager()
+        available_range = data_manager.get_available_date_range()
+        
+        if available_range['start_date'] and available_range['end_date']:
+            from datetime import datetime
+            
+            try:
+                requested_start = datetime.strptime(from_date, '%Y-%m-%d')
+                requested_end = datetime.strptime(to_date, '%Y-%m-%d')
+                available_start = datetime.strptime(available_range['start_date'], '%Y-%m-%d')
+                available_end = datetime.strptime(available_range['end_date'], '%Y-%m-%d')
+                
+                if requested_start < available_start or requested_end > available_end:
+                    return {
+                        'success': False, 
+                        'error': f'Requested date range ({from_date} to {to_date}) is outside available data range ({available_range["start_date"]} to {available_range["end_date"]})'
+                    }
+                    
+            except ValueError as e:
+                return {'success': False, 'error': f'Invalid date format: {e}'}
+        
         # Get clients
         delta_client = get_delta_client()
         strategy = get_strategy()
         
-        # Run backtest
+        # Run backtest with logging
         from backtest_engine import BacktestEngine
         engine = BacktestEngine(delta_client=delta_client, strategy=strategy)
+        
+        app_logger.info(f"Starting backtest for {from_date} to {to_date}")
         historical_data = engine.fetch_historical_data(from_date, to_date)
-        results = engine.run_backtest(historical_data)
+        app_logger.info(f"Historical data fetched: {len(historical_data.get('3m', []))} 3M candles, {len(historical_data.get('1h', []))} 1H candles")
+        
+        # Add a simple progress callback for logging
+        def debug_progress(progress_info):
+            step = progress_info.get('step', 'Processing...')
+            progress = progress_info.get('progress', 0)
+            app_logger.info(f"BACKTEST PROGRESS: {step} - {progress}%")
+        
+        results = engine.run_backtest(historical_data, progress_callback=debug_progress)
+        app_logger.info("Backtest execution completed")
         
         app_logger.info(f"Debug backtest completed, results keys: {list(results.keys()) if isinstance(results, dict) else 'not dict'}")
         

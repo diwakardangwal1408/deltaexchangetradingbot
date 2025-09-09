@@ -10,6 +10,7 @@ from delta_exchange_client import DeltaExchangeClient
 from btc_multi_timeframe_strategy import BTCMultiTimeframeStrategy
 from config_manager import config_manager
 from candle_timing import get_last_candle_close_time
+from data_manager import get_data_manager
 
 
 class BacktestEngine:
@@ -121,44 +122,59 @@ class BacktestEngine:
             if progress_callback:
                 progress_callback({"step": "Fetching 1h data", "progress": 10})
             
-            # For backtesting, we'll fetch a large amount of historical data
-            # The current API doesn't support date range filtering, so we'll fetch recent data
+            # Use local CSV data instead of API calls for much faster backtesting
             
-            # Calculate how many candles we need based on date range
-            days_diff = (datetime.strptime(to_date, '%Y-%m-%d') - datetime.strptime(from_date, '%Y-%m-%d')).days
-            hours_needed = days_diff * 24
-            candles_3m_needed = hours_needed * 20  # 20 3-minute candles per hour
-            
-            # Fetch 1h data for trend analysis (limit to reasonable amount)
-            data_1h = self.delta_client.get_historical_candles(
-                symbol='BTCUSD',
-                resolution='1h',
-                count=min(hours_needed, 500)  # API limit consideration
-            )
+            # Get the data manager instance  
+            data_manager = get_data_manager()
             
             if progress_callback:
-                progress_callback({"step": "Fetching 3m data", "progress": 50})
+                progress_callback({"step": "Ensuring data availability", "progress": 20})
             
-            # Fetch 3m data for signal generation (limit to reasonable amount) 
-            data_3m = self.delta_client.get_historical_candles(
-                symbol='BTCUSD',
-                resolution='3m',
-                count=min(candles_3m_needed, 1000)  # API limit consideration
-            )
+            # Ensure fresh data is available
+            if not data_manager.ensure_data_available():
+                raise Exception("Could not ensure data availability")
             
             if progress_callback:
-                progress_callback({"step": "Processing data", "progress": 80})
+                progress_callback({"step": "Pre-loading data in parallel threads for ultra-fast startup", "progress": 40})
             
-            # Process data into DataFrames
-            df_1h = self._process_candle_data(data_1h)
-            df_3m = self._process_candle_data(data_3m)
+            # Pre-load all data with indicators using parallel threads for maximum performance
+            if not data_manager.preload_parallel():
+                self.logger.warning("Failed to pre-load data in parallel, falling back to sequential loading")
+                if not data_manager.preload_with_indicators():
+                    self.logger.warning("Sequential fallback also failed, falling back to on-demand calculation")
             
-            self.logger.info(f"Fetched historical data: {len(df_1h)} 1h candles, {len(df_3m)} 3m candles")
+            if progress_callback:
+                progress_callback({"step": "Retrieving pre-calculated data", "progress": 70})
+            
+            # Get data with pre-calculated indicators for ultra-fast backtesting
+            df_1m = data_manager.get_data_with_indicators('1m', from_date, to_date)  # For precise exits!
+            df_3m = data_manager.get_data_with_indicators('3m', from_date, to_date)
+            df_1h = data_manager.get_data_with_indicators('1h', from_date, to_date)
+            
+            # Fallback to regular data if indicators not available
+            if df_1m is None:
+                df_1m = data_manager.get_data('1m', from_date, to_date)
+            if df_3m is None:
+                df_3m = data_manager.get_data('3m', from_date, to_date)
+            if df_1h is None:
+                df_1h = data_manager.get_data('1h', from_date, to_date)
+            
+            if df_1m is None or df_3m is None or df_1h is None:
+                raise Exception("Could not retrieve historical data from local storage")
+            
+            if df_1m.empty or df_3m.empty or df_1h.empty:
+                raise Exception("Retrieved data is empty for the specified date range")
+            
+            self.logger.info(f"Loaded historical data: {len(df_1h)} 1h candles, {len(df_3m)} 3m candles, {len(df_1m)} 1m candles")
+            self.logger.info(f"1M data range: {df_1m.index.min()} to {df_1m.index.max()}")
+            self.logger.info(f"3M data range: {df_3m.index.min()} to {df_3m.index.max()}")
+            self.logger.info(f"1H data range: {df_1h.index.min()} to {df_1h.index.max()}")
             
             if progress_callback:
                 progress_callback({"step": "Data ready", "progress": 100})
             
             return {
+                '1m': df_1m,  # Critical for precise exit timing!
                 '1h': df_1h,
                 '3m': df_3m,
                 'from_date': from_date,
@@ -378,12 +394,13 @@ class BacktestEngine:
             self.logger.info("=== STARTING DASHBOARD-STYLE BACKTEST ===")
             self.reset_backtest()
             
+            df_1m = historical_data['1m']  # Critical for precise exit timing!
             df_1h = historical_data['1h']
             df_3m = historical_data['3m']
             
-            self.logger.info(f"Data loaded: 3M = {len(df_3m)} candles, 1H = {len(df_1h)} candles")
+            self.logger.info(f"Data loaded: 1M = {len(df_1m)} candles, 3M = {len(df_3m)} candles, 1H = {len(df_1h)} candles")
             
-            if df_1h.empty or df_3m.empty:
+            if df_1m.empty or df_1h.empty or df_3m.empty:
                 raise ValueError("Historical data is empty")
             
             # Quick test of Dashboard methods
@@ -422,7 +439,7 @@ class BacktestEngine:
                 progress_callback({"step": "Generating signals", "progress": 30})
             
             # Process candles chronologically - generate signals AND manage positions
-            self._process_backtest_candles(df_3m, df_1h, progress_callback)
+            self._process_backtest_candles(df_3m, df_1h, df_1m, progress_callback)
             
             # Close any remaining positions
             self._close_all_positions(df_3m.iloc[-1])
@@ -451,7 +468,7 @@ class BacktestEngine:
         # No need to call internal methods that don't exist
         pass
     
-    def _process_backtest_candles(self, df_3m: pd.DataFrame, df_1h: pd.DataFrame, progress_callback=None):
+    def _process_backtest_candles(self, df_3m: pd.DataFrame, df_1h: pd.DataFrame, df_1m: pd.DataFrame, progress_callback=None):
         """Process candles chronologically, checking signals and exits at each step"""
         total_candles = len(df_3m)
         processed_candles = 0
@@ -463,82 +480,147 @@ class BacktestEngine:
         
         self.logger.info(f"Starting candle-by-candle processing: {total_candles} 3M candles")
         
+        # Performance tracking
+        start_time = time.time()
+        last_progress_time = start_time
+        
         for i in range(100, len(df_3m)):  # Start from 100 for enough data
             processed_candles += 1
             current_candle = df_3m.iloc[i]
             current_timestamp = df_3m.index[i]
             
-            # STEP 1: Check exits for ALL open positions FIRST
-            self._check_and_process_exits(current_candle, df_3m, i)
+            # Progress reporting every 100 candles
+            if processed_candles % 100 == 0:
+                current_time = time.time()
+                elapsed_since_start = current_time - start_time
+                elapsed_since_last = current_time - last_progress_time
+                
+                processing_rate = 100 / elapsed_since_last if elapsed_since_last > 0 else 0
+                overall_rate = processed_candles / elapsed_since_start if elapsed_since_start > 0 else 0
+                
+                progress_percent = (processed_candles / (total_candles - 100)) * 100
+                estimated_remaining = (total_candles - 100 - processed_candles) / overall_rate if overall_rate > 0 else 0
+                
+                self.logger.info(f"PROGRESS: {processed_candles}/{total_candles-100} candles ({progress_percent:.1f}%) | "
+                               f"Rate: {processing_rate:.1f} candles/sec | "
+                               f"Positions: {len(self.current_positions)} | "
+                               f"ETA: {estimated_remaining/60:.1f} min")
+                
+                # Send progress update to UI
+                if progress_callback:
+                    progress_callback({
+                        "step": f"Processing candles: {processed_candles}/{total_candles-100}",
+                        "progress": min(90, 10 + (progress_percent * 0.8)),  # 10-90% range
+                        "details": f"{processing_rate:.1f} candles/sec, {len(self.current_positions)} positions",
+                        "eta_minutes": estimated_remaining/60 if estimated_remaining > 0 else None
+                    })
+                
+                last_progress_time = current_time
             
-            # STEP 2: Check if we should look for new signals
-            if self._should_check_for_signal(current_timestamp):
-                # Get current 3M data slice
-                current_3m_data = df_3m.iloc[:i+1].copy()
-                
-                # Find 1H candles up to current timestamp
-                current_1h_data = df_1h[df_1h.index <= current_timestamp].copy()
-                
-                if len(current_1h_data) < 20:  # Need minimum 1H data
-                    continue
-                
-                # Check if we have a new 1H candle
-                current_1h_candle_time = current_1h_data.index[-1] if len(current_1h_data) > 0 else None
-                
-                if cached_1h_analysis is None or current_1h_candle_time != last_1h_candle_time:
-                    # Recalculate 1H indicators only if we have enough data
-                    if len(current_1h_data) >= 30:  # Same requirement as strategy validation
-                        try:
-                            cached_1h_analysis = self.strategy.calculate_dashboard_higher_timeframe_indicators(
-                                current_1h_data.copy(),
-                                self.config.get('futures_strategy', {}).get('trend_bullish_threshold', 3),
-                                self.config.get('futures_strategy', {}).get('trend_bearish_threshold', -3)
-                            )
-                            last_1h_candle_time = current_1h_candle_time
-                        except Exception as e:
-                            self.logger.debug(f"Insufficient 1H data for indicators at candle {i}: {len(current_1h_data)} candles")
-                            continue  # Skip this candle and continue
-                    else:
-                        continue  # Not enough 1H data yet, skip this iteration
-                
-                # Calculate 3M indicators
+            # STEP 1: Check exits for ALL open positions FIRST (with smart skipping)
+            if self._should_check_exits(current_candle, df_3m, i):
+                # Use precise 1M data for exit timing (CRITICAL FOR PROFITABILITY!)
+                current_1m_data = df_1m[df_1m.index <= current_timestamp]
+                self._check_and_process_exits_with_1m_precision(current_candle, df_3m, current_1m_data, i)
+            
+            # STEP 2: Check for new signals on EVERY 3M candle close (every 3 minutes)
+            # NEVER skip candles - every signal confirmation matters in trading!
+            # Get current 3M data slice (use view for performance)
+            current_3m_data = df_3m.iloc[:i+1]
+            
+            # Find 1H candles up to current timestamp (use view for performance)
+            current_1h_data = df_1h[df_1h.index <= current_timestamp]
+            
+            if len(current_1h_data) < 20:  # Need minimum 1H data
+                continue
+            
+            # Check if we have a new 1H candle
+            current_1h_candle_time = current_1h_data.index[-1] if len(current_1h_data) > 0 else None
+            
+            if cached_1h_analysis is None or current_1h_candle_time != last_1h_candle_time:
+                # Check if 1H data already has pre-calculated indicators
+                if len(current_1h_data) >= 30 and 'Trend_Direction' in current_1h_data.columns:
+                    # Use pre-calculated 1H indicators (ultra-fast)
+                    cached_1h_analysis = current_1h_data
+                    last_1h_candle_time = current_1h_candle_time
+                    self.logger.debug(f"Using pre-calculated 1H indicators (ultra-fast)")
+                elif len(current_1h_data) >= 30:
+                    # Fallback: Calculate 1H indicators on-demand (slower)
+                    try:
+                        cached_1h_analysis = self.strategy.calculate_dashboard_higher_timeframe_indicators(
+                            current_1h_data.copy(),  # Strategy needs copy for safety
+                            self.config.get('futures_strategy', {}).get('trend_bullish_threshold', 3),
+                            self.config.get('futures_strategy', {}).get('trend_bearish_threshold', -3)
+                        )
+                        last_1h_candle_time = current_1h_candle_time
+                        self.logger.debug(f"Calculated 1H indicators on-demand (slower)")
+                    except Exception as e:
+                        self.logger.debug(f"Insufficient 1H data for indicators at candle {i}: {len(current_1h_data)} candles")
+                        continue  # Skip this candle and continue
+                else:
+                    continue  # Not enough 1H data yet, skip this iteration
+            
+            # Use pre-calculated indicators (ultra-fast performance)
+            # Check if current 3M data already has indicators pre-calculated
+            if 'Total_Score' in current_3m_data.columns:
+                # Data already has indicators - no calculation needed!
+                current_3m_with_indicators = current_3m_data
+                indicators_time = 0  # No calculation time
+            else:
+                # Fallback: Calculate indicators on-demand (slower path)
+                indicators_start = time.time()
                 current_3m_with_indicators = self.strategy.calculate_dashboard_technical_indicators(current_3m_data.copy())
+                indicators_time = time.time() - indicators_start
+            
+            # Generate signal only if we have 1H analysis
+            if cached_1h_analysis is None:
+                continue  # Skip if no 1H analysis available yet
+            
+            signal_start = time.time()
+            signal_data = self.strategy.generate_dashboard_signals(
+                current_3m_with_indicators,
+                cached_1h_analysis,
+                self.config
+            )
+            signal_time = time.time() - signal_start
+            
+            # Log performance bottlenecks every 1000 candles
+            if processed_candles % 1000 == 0:
+                if indicators_time > 0:
+                    self.logger.debug(f"Performance: Indicators={indicators_time*1000:.1f}ms, Signals={signal_time*1000:.1f}ms per candle")
+                else:
+                    self.logger.debug(f"Performance: Pre-calculated indicators (0ms), Signals={signal_time*1000:.1f}ms per candle")
+            
+            # Process signal if valid
+            if signal_data and signal_data.get('signal', 0) != 0:
+                signals_found += 1
+                signal_info = {
+                    'timestamp': current_timestamp,
+                    'price': current_candle['Close'],
+                    'signal': signal_data['signal'],
+                    'strength': signal_data['strength'],
+                    'type': signal_data['type'],
+                    'reason': signal_data.get('decision_reasoning', ''),
+                    'index': i
+                }
                 
-                # Generate signal only if we have 1H analysis
-                if cached_1h_analysis is None:
-                    continue  # Skip if no 1H analysis available yet
+                # Log signal generation
+                self.logger.info(f"🔔 SIGNAL FOUND #{signals_found}: {signal_info['type']} at {current_timestamp} | "
+                               f"Price: ${signal_info['price']:.2f} | Strength: {signal_info['strength']} | "
+                               f"Reason: {signal_info['reason']}")
                 
-                signal_data = self.strategy.generate_dashboard_signals(
-                    current_3m_with_indicators,
-                    cached_1h_analysis,
-                    self.config
-                )
-                
-                # Process signal if valid
-                if signal_data and signal_data.get('signal', 0) != 0:
-                    signals_found += 1
-                    signal_info = {
-                        'timestamp': current_timestamp,
-                        'price': current_candle['Close'],
-                        'signal': signal_data['signal'],
-                        'strength': signal_data['strength'],
-                        'type': signal_data['type'],
-                        'reason': signal_data.get('decision_reasoning', ''),
-                        'index': i
-                    }
+                # Try to open position
+                if self._can_open_position(signal_info):
+                    position_size = self._calculate_position_size(signal_info['price'])
+                    trade = self._execute_simulated_trade(signal_info, position_size, df_3m)
                     
-                    # Try to open position
-                    if self._can_open_position(signal_info):
-                        position_size = self._calculate_position_size(signal_info['price'])
-                        trade = self._execute_simulated_trade(signal_info, position_size, df_3m)
+                    if trade:
+                        self.trades_history.append(trade)
+                        self.current_positions[trade['id']] = trade
+                        self.last_trade_time = signal_info['timestamp']
+                        self.current_capital -= trade['margin_used']
                         
-                        if trade:
-                            self.trades_history.append(trade)
-                            self.current_positions[trade['id']] = trade
-                            self.last_trade_time = signal_info['timestamp']
-                            self.current_capital -= trade['margin_used']
-                            
-                            self.logger.info(f"Trade EXECUTED #{len(self.trades_history)}: {signal_info['type']} at {signal_info['timestamp']} price={signal_info['price']}")
+                        self.logger.info(f"Trade EXECUTED #{len(self.trades_history)}: {signal_info['type']} at {signal_info['timestamp']} price={signal_info['price']}")
             
             # Update progress
             if progress_callback and processed_candles % 100 == 0:
@@ -547,10 +629,183 @@ class BacktestEngine:
         
         self.logger.info(f"Candle processing complete: {processed_candles} candles, {signals_found} signals, {len(self.trades_history)} trades")
     
+    def _should_check_exits(self, current_candle, df_3m, current_idx):
+        """Smart exit checking - skip when no positions or minimal price movement"""
+        # Skip if no positions exist
+        if not self.current_positions:
+            return False
+        
+        # Always check on first few candles for safety
+        if current_idx < 105:
+            return True
+            
+        # Skip if price hasn't moved significantly since last check
+        if hasattr(self, '_last_exit_check_price') and hasattr(self, '_last_exit_check_idx'):
+            current_price = float(current_candle['Close'])
+            last_price = float(self._last_exit_check_price)
+            
+            price_change_pct = abs((current_price - last_price) / last_price)
+            candles_since_last = current_idx - self._last_exit_check_idx
+            
+            # Skip if price moved <0.1% and less than 10 candles since last check
+            if price_change_pct < 0.001 and candles_since_last < 10:
+                return False
+        
+        # Update tracking variables
+        self._last_exit_check_price = float(current_candle['Close'])
+        self._last_exit_check_idx = current_idx
+        
+        return True
+    
     def _should_check_for_signal(self, timestamp):
         """Determine if we should check for signals at this timestamp"""
         # Check signals every 3 minutes (on candle close)
         return True  # For now, check every candle
+    
+    def _check_and_process_exits_with_1m_precision(self, current_3m_candle, df_3m, df_1m, current_idx):
+        """Check and process exits using 1M precision for accurate timing - CRITICAL FOR PROFITABILITY!"""
+        if not self.current_positions or df_1m.empty:
+            return
+        
+        # Get all 1M candles between the last 3M candle and current 3M candle for precise exit timing
+        current_3m_time = current_3m_candle.name
+        prev_3m_time = df_3m.index[current_idx - 1] if current_idx > 0 else current_3m_time
+        
+        # Get 1M candles in the current 3M period for precise exit checking
+        relevant_1m_candles = df_1m[(df_1m.index > prev_3m_time) & (df_1m.index <= current_3m_time)]
+        
+        if relevant_1m_candles.empty:
+            # Fallback to 3M candle if no 1M data available
+            self._check_and_process_exits(current_3m_candle, df_3m, current_idx)
+            return
+        
+        positions_to_close = []
+        
+        # Check each 1M candle for precise exit timing
+        for minute_timestamp, minute_candle in relevant_1m_candles.iterrows():
+            if not self.current_positions:  # No more positions to check
+                break
+                
+            current_price = minute_candle['Close']
+            high_price = minute_candle['High']
+            low_price = minute_candle['Low']
+            
+            for trade_id, trade in list(self.current_positions.items()):
+                if trade['status'] != 'open':
+                    continue
+                
+                exit_reason = None
+                exit_price = current_price
+                
+                # First, update trailing stops based on current HIGH price (most favorable move)
+                original_stop = trade['stop_loss']
+                
+                if trade['side'] == 'long':
+                    # Update trailing stop if new high achieved
+                    if high_price > trade.get('high_water_mark', trade['entry_price']):
+                        trade['high_water_mark'] = high_price
+                        # Calculate new trailing stop
+                        if trade.get('exit_method') == 'ATR' and trade.get('trailing_distance'):
+                            new_trailing_stop = high_price - trade['trailing_distance']
+                        else:
+                            new_trailing_stop = high_price - (self.trailing_stop_usd / trade['position_size'])
+                        # Move stop up only (never down)
+                        trade['stop_loss'] = max(trade['stop_loss'], new_trailing_stop)
+                        
+                        if trade['stop_loss'] > original_stop:
+                            self.logger.debug(f"🔄 Trailing stop updated for LONG #{trade['id']}: ${original_stop:.2f} → ${trade['stop_loss']:.2f} (High: ${high_price:.2f})")
+                
+                else:  # short position  
+                    # Update trailing stop if new low achieved
+                    if low_price < trade.get('low_water_mark', trade['entry_price']):
+                        trade['low_water_mark'] = low_price
+                        # Calculate new trailing stop
+                        if trade.get('exit_method') == 'ATR' and trade.get('trailing_distance'):
+                            new_trailing_stop = low_price + trade['trailing_distance']
+                        else:
+                            new_trailing_stop = low_price + (self.trailing_stop_usd / trade['position_size'])
+                        # Move stop down only (never up)
+                        trade['stop_loss'] = min(trade['stop_loss'], new_trailing_stop)
+                        
+                        if trade['stop_loss'] < original_stop:
+                            self.logger.debug(f"🔄 Trailing stop updated for SHORT #{trade['id']}: ${original_stop:.2f} → ${trade['stop_loss']:.2f} (Low: ${low_price:.2f})")
+
+                # Now check exit conditions using HIGH/LOW for maximum accuracy
+                if trade['side'] == 'long':
+                    # For long positions, check if LOW hit stop loss or HIGH hit take profit
+                    if low_price <= trade['stop_loss']:
+                        if trade['stop_loss'] > original_stop:
+                            exit_reason = "Trailing Stop"  # Distinguish trailing from regular stop
+                        else:
+                            exit_reason = "Stop Loss"
+                        exit_price = trade['stop_loss']  # Assume exact stop hit
+                    elif high_price >= trade['take_profit']:
+                        exit_reason = "Take Profit" 
+                        exit_price = trade['take_profit']  # Assume exact target hit
+                    elif high_price >= trade.get('quick_profit', float('inf')):
+                        exit_reason = "Quick Profit"
+                        exit_price = trade['quick_profit']
+                else:  # short position
+                    # For short positions, check if HIGH hit stop loss or LOW hit take profit
+                    if high_price >= trade['stop_loss']:
+                        if trade['stop_loss'] < original_stop:
+                            exit_reason = "Trailing Stop"  # Distinguish trailing from regular stop
+                        else:
+                            exit_reason = "Stop Loss"
+                        exit_price = trade['stop_loss']
+                    elif low_price <= trade['take_profit']:
+                        exit_reason = "Take Profit"
+                        exit_price = trade['take_profit']
+                    elif low_price <= trade.get('quick_profit', float('-inf')):
+                        exit_reason = "Quick Profit"
+                        exit_price = trade['quick_profit']
+                
+                # Execute exit with precise timing using existing method
+                if exit_reason:
+                    # Close the position using the existing method
+                    self._close_position(trade, exit_price, minute_timestamp, exit_reason)
+                    
+                    # Remove from current positions (safe deletion)  
+                    if trade_id in self.current_positions:
+                        del self.current_positions[trade_id]
+                    
+                    self.logger.info(f"🎯 PRECISE EXIT: {trade['side']} position #{trade['id']} at {minute_timestamp} | "
+                                   f"Price: ${exit_price:.2f} | Reason: {exit_reason} | "
+                                   f"P&L: ${trade.get('pnl', 0):.2f} (1M precision)")
+        
+        # Log performance benefit
+        if relevant_1m_candles is not None and len(relevant_1m_candles) > 1:
+            self.logger.debug(f"Used {len(relevant_1m_candles)} 1M candles for precise exit timing (vs 1 3M candle)")
+    
+    def _close_position(self, trade, exit_price, exit_time, exit_reason):
+        """Close a position and update trade records"""
+        try:
+            # Calculate final P&L
+            if trade['side'] == 'long':
+                pnl = (exit_price - trade['entry_price']) * trade['position_size'] - trade['fees']
+            else:  # short
+                pnl = (trade['entry_price'] - exit_price) * trade['position_size'] - trade['fees']
+            
+            # Update trade record
+            trade['exit_price'] = exit_price
+            trade['exit_time'] = exit_time
+            trade['exit_reason'] = exit_reason
+            trade['pnl'] = pnl
+            trade['status'] = 'closed'
+            trade['duration'] = (exit_time - trade['entry_time']).total_seconds() / 60  # Duration in minutes
+            
+            # Update capital (add back margin + P&L)
+            self.current_capital += trade['margin_used'] + pnl
+            
+            # Add to closed positions list
+            self.closed_positions.append(trade.copy())
+            
+            self.logger.debug(f"Position closed: {trade['side']} #{trade['id']} | "
+                            f"Entry: ${trade['entry_price']:.2f} | Exit: ${exit_price:.2f} | "
+                            f"P&L: ${pnl:.2f} | Reason: {exit_reason}")
+            
+        except Exception as e:
+            self.logger.error(f"Error closing position {trade.get('id', 'unknown')}: {e}")
     
     def _check_and_process_exits(self, current_candle, df_3m, current_idx):
         """Check and process exits for all open positions"""

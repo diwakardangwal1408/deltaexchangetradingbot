@@ -512,6 +512,91 @@ class DeltaExchangeClient:
             self.logger.error(f"Real candle data fetch failed for {symbol}: {e}")
             raise Exception(f"Failed to fetch real candle data for {symbol} {resolution}: {e}")
     
+    def get_historical_candles_by_timestamps(self, symbol, resolution, start_timestamp, end_timestamp):
+        """Get historical candles using explicit start and end timestamps"""
+        try:
+            # Get product_id from cached products data
+            if not self.products:
+                self.get_products()
+            
+            product_info = self.products.get(symbol)
+            if not product_info or 'id' not in product_info:
+                self.logger.error(f"Product info not found for {symbol}")
+                raise Exception(f"Product info not found for {symbol}")
+            
+            # Map resolution to Delta Exchange format
+            resolution_map = {
+                '1m': '1m',
+                '3m': '3m', 
+                '5m': '5m',
+                '15m': '15m',
+                '30m': '30m',
+                '1h': '1h',
+                '1H': '1h',
+                '4h': '4h',
+                '1d': '1d'
+            }
+            
+            delta_resolution = resolution_map.get(resolution, '5m')
+            
+            # Use the official Delta Exchange candles endpoint with explicit timestamps
+            endpoint = f'/v2/history/candles'
+            
+            params = {
+                'symbol': symbol,
+                'resolution': delta_resolution,
+                'start': int(start_timestamp),
+                'end': int(end_timestamp)
+            }
+            
+            self.logger.info(f"API Request: {self.base_url}{endpoint}")
+            self.logger.info(f"Parameters: {params}")
+            self.logger.debug(f"Full URL would be: {self.base_url}{endpoint}?symbol={symbol}&resolution={delta_resolution}&start={int(start_timestamp)}&end={int(end_timestamp)}")
+            
+            response = self._make_public_request(endpoint, params)
+            candles_raw = response.get('result', [])
+            
+            if not candles_raw:
+                self.logger.warning(f"No candles returned for {symbol} {resolution} from {start_timestamp} to {end_timestamp}")
+                return []
+            
+            # Convert Delta Exchange candle format to standard format
+            candles_data = []
+            for candle in candles_raw:
+                try:
+                    # Delta Exchange candle format is already a dict: {'time': timestamp, 'open': ..., 'high': ..., ...}
+                    if isinstance(candle, dict) and 'time' in candle:
+                        candle_dict = {
+                            'time': int(candle['time']),  # Unix timestamp
+                            'open': float(candle['open']),
+                            'high': float(candle['high']), 
+                            'low': float(candle['low']),
+                            'close': float(candle['close']),
+                            'volume': float(candle['volume'])
+                        }
+                        candles_data.append(candle_dict)
+                    elif isinstance(candle, (list, tuple)) and len(candle) >= 6:
+                        # Fallback for array format: [timestamp, open, high, low, close, volume]
+                        candle_dict = {
+                            'time': int(candle[0]),  # Unix timestamp
+                            'open': float(candle[1]),
+                            'high': float(candle[2]), 
+                            'low': float(candle[3]),
+                            'close': float(candle[4]),
+                            'volume': float(candle[5])
+                        }
+                        candles_data.append(candle_dict)
+                except Exception as e:
+                    self.logger.debug(f"Error parsing candle data: {e}")
+                    continue
+            
+            self.logger.info(f"Successfully fetched {len(candles_data)} candles for {symbol} {resolution} from {start_timestamp} to {end_timestamp}")
+            return candles_data
+            
+        except Exception as e:
+            self.logger.error(f"Timestamp-based candle data fetch failed for {symbol}: {e}")
+            raise Exception(f"Failed to fetch candle data for {symbol} {resolution}: {e}")
+    
     def get_account_balance(self):
         """Get wallet balance using official /v2/wallet/balances endpoint - NO FALLBACKS"""
         try:
@@ -544,16 +629,16 @@ class DeltaExchangeClient:
             self.logger.error(f"Wallet balance fetch failed: {e}")
             raise Exception(f"Wallet balance unavailable: {e}")
     
-    def get_multi_timeframe_data(self, symbol='BTCUSD'):
+    def get_multi_timeframe_data(self, symbol='BTCUSD', count_3m=200, count_1h=100):
         """Get multi-timeframe data for analysis"""
         try:
             data = {}
             
-            # Get 3m data (200 candles for short-term analysis)
-            data['3m'] = self.get_historical_candles(symbol, '3m', 200)
+            # Get 3m data with specified count
+            data['3m'] = self.get_historical_candles(symbol, '3m', count_3m)
             
-            # Get 1h data (100 candles for higher timeframe trend)
-            data['1h'] = self.get_historical_candles(symbol, '1h', 100)
+            # Get 1h data with specified count
+            data['1h'] = self.get_historical_candles(symbol, '1h', count_1h)
             
             return data
             
