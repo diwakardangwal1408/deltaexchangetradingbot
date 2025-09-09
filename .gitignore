@@ -1,0 +1,68 @@
+# Configuration files with sensitive data
+application.config
+delta_config.json
+delta_trading_state.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+delta_btc_trading.log
+
+# Temporary files
+*.tmp
+*.temp
+nul
+
+# Screenshots and images (optional)
+Screenshot*.jpg
+Screenshot*.png
+
+# Claude Code settings (optional - remove if you want to share Claude settings)
+.claude/
+.claude.json
+.claude.json.backup
