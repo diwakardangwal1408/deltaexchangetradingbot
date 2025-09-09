@@ -1,5 +1,5 @@
 # Configuration files with sensitive data
-application.config
+# application.config - now tracked with empty credentials for template
 delta_config.json
 delta_trading_state.json
 
