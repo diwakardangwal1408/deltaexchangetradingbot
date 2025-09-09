@@ -21,6 +21,22 @@ app.secret_key = 'your-secret-key-change-this'  # Change this to a random secret
 trading_bot_process = None
 bot_running = False
 
+def get_real_time_market_timestamp():
+    """Get current market timestamp from Delta Exchange ticker API"""
+    try:
+        delta_client = get_delta_client()
+        response = delta_client._make_public_request('/v2/tickers/BTCUSD')
+        ticker = response.get('result')
+        if ticker and ticker.get('timestamp'):
+            # Convert microsecond timestamp to datetime
+            ticker_ts_sec = ticker['timestamp'] / 1000000
+            return datetime.fromtimestamp(ticker_ts_sec).isoformat()
+    except Exception as e:
+        logging.warning(f"Failed to get real-time market timestamp: {e}")
+    
+    # Fallback to current system time
+    return datetime.now().isoformat()
+
 def get_delta_client():
     """Get Delta Exchange client instance"""
     config = config_manager.get_all_config()
@@ -1106,10 +1122,22 @@ def api_signal_data():
                     }
                 }
             
-            # Get candle close time from timestamp
+            # Get current market time from real-time ticker instead of historical candle time
             candle_close_time = None
-            if 'timestamp' in df.columns and not pd.isna(latest.get('timestamp')):
-                candle_close_time = latest['timestamp'].isoformat()
+            try:
+                delta_client = get_delta_client()
+                response = delta_client._make_public_request('/v2/tickers/BTCUSD')
+                ticker = response.get('result')
+                if ticker and ticker.get('timestamp'):
+                    # Convert microsecond timestamp to datetime
+                    ticker_ts_sec = ticker['timestamp'] / 1000000
+                    candle_close_time = datetime.fromtimestamp(ticker_ts_sec).isoformat()
+            except Exception as e:
+                logging.warning(f"Failed to get real-time market timestamp: {e}")
+                # Fallback to estimated time based on candle data
+                if 'timestamp' in df.columns and not pd.isna(latest.get('timestamp')):
+                    candle_open_time = pd.to_datetime(latest['timestamp'])
+                    candle_close_time = (candle_open_time + pd.Timedelta(minutes=3)).isoformat()
             
             return jsonify({
                 'success': True,
@@ -1433,7 +1461,7 @@ def api_higher_timeframe_trend():
                     'trend_strength': trend_strength,
                     'total_score': total_score,
                     'max_score': 15,
-                    'candle_close_time': latest_candle['timestamp'].isoformat() if 'timestamp' in latest_candle else datetime.now().isoformat(),
+                    'candle_close_time': get_real_time_market_timestamp(),
                     'indicators': {
                         'fisher': {
                             'value': fisher.iloc[-1] if not pd.isna(fisher.iloc[-1]) else None,
@@ -1473,7 +1501,7 @@ def api_higher_timeframe_trend():
                     'trend_strength': 'Unknown',
                     'total_score': 0,
                     'max_score': 15,
-                    'candle_close_time': datetime.now().isoformat(),
+                    'candle_close_time': get_real_time_market_timestamp(),
                     'indicators': {
                         'fisher': {'value': None, 'score': 0, 'meaning': 'Data unavailable'},
                         'tsi': {'value': None, 'score': 0, 'meaning': 'Data unavailable'},
@@ -1491,7 +1519,7 @@ def api_higher_timeframe_trend():
                 'trend_strength': 'Unknown',
                 'total_score': 0,
                 'max_score': 15,
-                'candle_close_time': datetime.now().isoformat(),
+                'candle_close_time': get_real_time_market_timestamp(),
                 'indicators': {
                     'fisher': {'value': None, 'score': 0, 'meaning': 'No data'},
                     'tsi': {'value': None, 'score': 0, 'meaning': 'No data'},

@@ -421,10 +421,19 @@ class DeltaExchangeClient:
             
             # Use the official Delta Exchange candles endpoint
             endpoint = f'/v2/history/candles'
+            
+            # Calculate time range for the last 'count' candles
+            import time
+            current_time = int(time.time())
+            interval_seconds = {'1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400}
+            seconds_per_candle = interval_seconds.get(delta_resolution, 300)
+            start_time = current_time - (count * seconds_per_candle)
+            
             params = {
-                'product_id': product_id,
+                'symbol': symbol,
                 'resolution': delta_resolution,
-                'count': count
+                'start': start_time,
+                'end': current_time
             }
             
             response = self._make_public_request(endpoint, params)
@@ -438,8 +447,19 @@ class DeltaExchangeClient:
             candles_data = []
             for candle in candles_raw:
                 try:
-                    # Delta Exchange candle format: [timestamp, open, high, low, close, volume]
-                    if len(candle) >= 6:
+                    # Delta Exchange candle format is already a dict: {'time': timestamp, 'open': ..., 'high': ..., ...}
+                    if isinstance(candle, dict) and 'time' in candle:
+                        candle_dict = {
+                            'time': int(candle['time']),  # Unix timestamp
+                            'open': float(candle['open']),
+                            'high': float(candle['high']), 
+                            'low': float(candle['low']),
+                            'close': float(candle['close']),
+                            'volume': float(candle['volume'])
+                        }
+                        candles_data.append(candle_dict)
+                    elif isinstance(candle, (list, tuple)) and len(candle) >= 6:
+                        # Fallback for array format: [timestamp, open, high, low, close, volume]
                         candle_dict = {
                             'time': int(candle[0]),  # Unix timestamp
                             'open': float(candle[1]),
@@ -458,39 +478,7 @@ class DeltaExchangeClient:
             
         except Exception as e:
             self.logger.error(f"Real candle data fetch failed for {symbol}: {e}")
-            # Fallback to simulated data only if real API fails
-            self.logger.warning(f"Falling back to simulated data for {symbol}")
-            
-            import time
-            current_time = int(time.time())
-            interval_seconds = {'1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400}
-            seconds = interval_seconds.get(resolution, 300)
-            
-            candles_data = []
-            base_price = 112000  # Reasonable BTC price base
-            
-            for i in range(count):
-                timestamp = current_time - (i * seconds)
-                # Add some realistic price movement
-                price_offset = (i % 20 - 10) * 50  # ±$500 variation
-                open_price = base_price + price_offset
-                close_price = open_price + ((i % 3 - 1) * 25)  # Small candle movements
-                high_price = max(open_price, close_price) + abs(i % 5) * 10
-                low_price = min(open_price, close_price) - abs(i % 4) * 10
-                
-                candle = {
-                    'time': timestamp,
-                    'open': open_price,
-                    'high': high_price, 
-                    'low': low_price,
-                    'close': close_price,
-                    'volume': 8000 + (i % 2000)  # Realistic volume range
-                }
-                candles_data.append(candle)
-            
-            candles_data.reverse()  # Oldest first
-            self.logger.info(f"Generated {len(candles_data)} simulated candles for {symbol} {resolution}")
-            return candles_data
+            raise Exception(f"Failed to fetch real candle data for {symbol} {resolution}: {e}")
     
     def get_account_balance(self):
         """Get wallet balance using official /v2/wallet/balances endpoint - NO FALLBACKS"""

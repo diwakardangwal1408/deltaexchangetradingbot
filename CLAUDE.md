@@ -195,6 +195,7 @@ While fixing bugs do not remove any major functionality which can destroy the sy
 
 Always remember you are working on windows machine so try to use windows commands on terminal and not unix commands
 
+
 APIs for delta exchange to be used are placed at 
 
 Products - https://docs.delta.exchange/#delta-exchange-api-v2-products
