@@ -117,7 +117,14 @@ min_time_between_neutral_trades = 7200"""
             },
             
             # Currency Conversion
-            'USD': self.config.getfloat('DOLLAR_COVERSION_FACTOR', 'USD', fallback=85.0)
+            'USD': self.config.getfloat('DOLLAR_COVERSION_FACTOR', 'USD', fallback=85.0),
+            
+            # Logging Configuration
+            'logging': {
+                'console_level': self.config.get('LOGGING', 'console_level', fallback='INFO'),
+                'log_file': self.config.get('LOGGING', 'log_file', fallback='delta_btc_trading.log'),
+                'file_level': self.config.get('LOGGING', 'file_level', fallback='DEBUG')
+            }
         }
         
         return config_dict
@@ -181,6 +188,13 @@ min_time_between_neutral_trades = 7200"""
             self.config.set('DOLLAR_BASED_RISK', 'quick_profit_usd', str(dollar_risk.get('quick_profit_usd', 60.0)))
             self.config.set('DOLLAR_BASED_RISK', 'max_risk_usd', str(dollar_risk.get('max_risk_usd', 150.0)))
             self.config.set('DOLLAR_BASED_RISK', 'daily_loss_limit_usd', str(dollar_risk.get('daily_loss_limit_usd', 500.0)))
+            
+            # Add Logging Configuration
+            self.config.add_section('LOGGING')
+            logging_config = config_data.get('logging', {})
+            self.config.set('LOGGING', 'console_level', str(logging_config.get('console_level', 'INFO')))
+            self.config.set('LOGGING', 'log_file', str(logging_config.get('log_file', 'delta_btc_trading.log')))
+            self.config.set('LOGGING', 'file_level', str(logging_config.get('file_level', 'DEBUG')))
             
             # Write to file
             with open(self.config_file, 'w') as configfile:

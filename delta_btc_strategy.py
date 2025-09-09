@@ -9,6 +9,7 @@ from delta_exchange_client import DeltaExchangeClient
 from btc_multi_timeframe_strategy import BTCMultiTimeframeStrategy
 # Excel logging removed - using Delta Exchange only
 from config_manager import config_manager
+from logger_config import get_logger, TradingLogger
 
 class DeltaBTCOptionsTrader:
     """
@@ -48,16 +49,13 @@ class DeltaBTCOptionsTrader:
         self.available_options = []  # Initialize options list (for strangle trades only)
         self.available_futures = {}  # Initialize futures contracts (for directional trades)
         
-        # Setup logging
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('delta_btc_trading.log'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
+        # Setup logging using centralized configuration
+        logging_config = self.config.get('logging', {})
+        console_level = logging_config.get('console_level', 'INFO')
+        log_file = logging_config.get('log_file', 'delta_btc_trading.log')
+        
+        self.logger = get_logger(__name__, console_level, log_file)
+        TradingLogger.log_system_info(self.logger)
         
         # Dollar-based risk management
         dollar_risk_config = self.config.get('dollar_based_risk', {})
@@ -1046,7 +1044,8 @@ async def main():
         # Start trading
         await trader.trading_loop()
     else:
-        print("Failed to initialize trader")
+        logger = get_logger(__name__)
+        logger.error("Failed to initialize trader")
 
 if __name__ == "__main__":
     asyncio.run(main())

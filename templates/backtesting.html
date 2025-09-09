@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strategy Backtesting - BTC Options Trader</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tempusdominus-bootstrap-4/5.39.0/css/tempusdominus-bootstrap-4.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+    <style>
+        body {
+            background-color: #121212;
+            color: #ffffff;
+        }
+        .navbar {
+            background-color: #1f1f1f !important;
+        }
+        .card {
+            background-color: #1e1e1e;
+            border-color: #333;
+        }
+        .card-header {
+            background-color: #2d2d2d;
+            border-bottom-color: #333;
+        }
+        .form-control, .form-select {
+            background-color: #2d2d2d;
+            border-color: #555;
+            color: #ffffff;
+        }
+        .form-control:focus, .form-select:focus {
+            background-color: #2d2d2d;
+            border-color: #007bff;
+            color: #ffffff;
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            border-color: #6c757d;
+        }
+        .table-dark {
+            --bs-table-bg: #1e1e1e;
+        }
+        .metric-card {
+            background: linear-gradient(135deg, #1e1e1e, #2d2d2d);
+            border-left: 4px solid #007bff;
+        }
+        .metric-positive {
+            color: #28a745;
+        }
+        .metric-negative {
+            color: #dc3545;
+        }
+        .metric-neutral {
+            color: #ffc107;
+        }
+        .progress {
+            background-color: #2d2d2d;
+        }
+        .spinner-border {
+            width: 1.5rem;
+            height: 1.5rem;
+        }
+        #backtestResults {
+            display: none;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-bottom: 20px;
+        }
+        .settings-display {
+            background-color: #2d2d2d;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #555;
+        }
+        .setting-item:last-child {
+            border-bottom: none;
+        }
+        .alert-info {
+            background-color: #1e3a5f;
+            border-color: #1e3a5f;
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-graph-up"></i> BTC Options Trader
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/">Dashboard</a>
+                <a class="nav-link" href="/settings">Settings</a>
+                <a class="nav-link" href="/trades">Trades</a>
+                <a class="nav-link active" href="/backtesting">Backtesting</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <div class="col-12">
+                <h1><i class="bi bi-clock-history"></i> Strategy Backtesting</h1>
+                <p class="text-muted">Test your trading strategy against historical data using current settings</p>
+            </div>
+        </div>
+
+        <!-- Current Settings Display -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="bi bi-gear"></i> Current Strategy Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="settings-display" id="currentSettings">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <h6>Portfolio Settings</h6>
+                                    <div class="setting-item">
+                                        <span>Initial Capital:</span>
+                                        <span>$<span id="setting-portfolio-size">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Position Size:</span>
+                                        <span>$<span id="setting-position-size">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Max Positions:</span>
+                                        <span id="setting-max-positions">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Max Daily Loss:</span>
+                                        <span>$<span id="setting-max-daily-loss">--</span></span>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <h6>Futures Strategy</h6>
+                                    <div class="setting-item">
+                                        <span>Enabled:</span>
+                                        <span id="setting-futures-enabled">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Long Threshold:</span>
+                                        <span id="setting-long-threshold">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Short Threshold:</span>
+                                        <span id="setting-short-threshold">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Leverage:</span>
+                                        <span><span id="setting-leverage">--</span>x</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <h6>Risk Management</h6>
+                                    <div class="setting-item">
+                                        <span>Stop Loss:</span>
+                                        <span>$<span id="setting-stop-loss">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Take Profit:</span>
+                                        <span>$<span id="setting-take-profit">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Trailing Stop:</span>
+                                        <span>$<span id="setting-trailing-stop">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Min Signal Strength:</span>
+                                        <span id="setting-min-signal">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Backtest Configuration -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="bi bi-calendar3"></i> Backtest Configuration</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="backtestForm">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <label for="fromDate" class="form-label">From Date</label>
+                                    <input type="date" class="form-control" id="fromDate" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="toDate" class="form-label">To Date</label>
+                                    <input type="date" class="form-control" id="toDate" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">&nbsp;</label>
+                                    <div>
+                                        <button type="submit" class="btn btn-primary" id="runBacktestBtn">
+                                            <i class="bi bi-play-circle"></i> Run Backtest
+                                        </button>
+                                        <button type="button" class="btn btn-secondary" id="resetBtn">
+                                            <i class="bi bi-arrow-clockwise"></i> Reset
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <div class="alert alert-info">
+                                        <i class="bi bi-info-circle"></i>
+                                        <strong>Note:</strong> Backtesting uses your current strategy settings and will simulate trades based on historical data from Delta Exchange. 
+                                        Maximum date range is 1 year. Results are for educational purposes only.
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="row mb-4" id="progressSection" style="display: none;">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span id="progressText">Initializing backtest...</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                        <div class="progress">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 role="progressbar" style="width: 0%" id="progressBar"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="backtestResults">
+            <!-- Summary Metrics -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <h3><i class="bi bi-graph-up"></i> Backtest Results</h3>
+                </div>
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card metric-card">
+                        <div class="card-body text-center">
+                            <h5 class="card-title">Total Return</h5>
+                            <h2 id="totalReturn" class="metric-positive">--</h2>
+                            <small class="text-muted">$<span id="totalPnL">--</span> P&L</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card metric-card">
+                        <div class="card-body text-center">
+                            <h5 class="card-title">Win Rate</h5>
+                            <h2 id="winRate" class="metric-positive">--</h2>
+                            <small class="text-muted"><span id="winningTrades">--</span>/<span id="totalTrades">--</span> trades</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card metric-card">
+                        <div class="card-body text-center">
+                            <h5 class="card-title">Max Drawdown</h5>
+                            <h2 id="maxDrawdown" class="metric-negative">--</h2>
+                            <small class="text-muted">Risk metric</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card metric-card">
+                        <div class="card-body text-center">
+                            <h5 class="card-title">Profit Factor</h5>
+                            <h2 id="profitFactor" class="metric-neutral">--</h2>
+                            <small class="text-muted">Risk/Reward</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="row mb-4">
+                <div class="col-lg-8 mb-3">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5><i class="bi bi-graph-up-arrow"></i> Equity Curve</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container">
+                                <canvas id="equityChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4 mb-3">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5><i class="bi bi-pie-chart"></i> Trade Distribution</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container">
+                                <canvas id="tradeDistributionChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detailed Metrics -->
+            <div class="row mb-4">
+                <div class="col-lg-6 mb-3">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5><i class="bi bi-calculator"></i> Performance Metrics</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-6">
+                                    <div class="setting-item">
+                                        <span>Initial Capital:</span>
+                                        <span>$<span id="initialCapital">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Final Capital:</span>
+                                        <span>$<span id="finalCapital">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Annualized Return:</span>
+                                        <span id="annualizedReturn">--%</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Sharpe Ratio:</span>
+                                        <span id="sharpeRatio">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Calmar Ratio:</span>
+                                        <span id="calmarRatio">--</span>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="setting-item">
+                                        <span>Average Trade:</span>
+                                        <span>$<span id="avgTrade">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Average Win:</span>
+                                        <span>$<span id="avgWin">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Average Loss:</span>
+                                        <span>$<span id="avgLoss">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Largest Win:</span>
+                                        <span>$<span id="largestWin">--</span></span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Largest Loss:</span>
+                                        <span>$<span id="largestLoss">--</span></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-6 mb-3">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5><i class="bi bi-bar-chart"></i> Trade Statistics</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-6">
+                                    <div class="setting-item">
+                                        <span>Total Trades:</span>
+                                        <span id="totalTradesDetailed">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Winning Trades:</span>
+                                        <span id="winningTradesDetailed">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Losing Trades:</span>
+                                        <span id="losingTrades">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Win/Loss Ratio:</span>
+                                        <span id="winLossRatio">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Avg Duration:</span>
+                                        <span id="avgDuration">-- hrs</span>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="setting-item">
+                                        <span>Max Consecutive Wins:</span>
+                                        <span id="maxConsecutiveWins">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Max Consecutive Losses:</span>
+                                        <span id="maxConsecutiveLosses">--</span>
+                                    </div>
+                                    <div class="setting-item">
+                                        <span>Backtest Duration:</span>
+                                        <span id="backtestDuration">-- days</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trade History Table -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5><i class="bi bi-list"></i> Trade History</h5>
+                            <button class="btn btn-sm btn-outline-primary" id="exportBtn">
+                                <i class="bi bi-download"></i> Export CSV
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-dark table-striped" id="tradesTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Entry Time</th>
+                                            <th>Exit Time</th>
+                                            <th>Side</th>
+                                            <th>Entry Price</th>
+                                            <th>Exit Price</th>
+                                            <th>Size</th>
+                                            <th>P&L</th>
+                                            <th>Signal</th>
+                                            <th>Exit Reason</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tradesTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let backtestData = null;
+        let equityChart = null;
+        let tradeDistributionChart = null;
+
+        // Set default dates (3 months ago to today)
+        document.addEventListener('DOMContentLoaded', function() {
+            const today = new Date();
+            const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate());
+            
+            document.getElementById('fromDate').valueAsDate = threeMonthsAgo;
+            document.getElementById('toDate').valueAsDate = today;
+            
+            loadCurrentSettings();
+        });
+
+        // Load current settings from config
+        async function loadCurrentSettings() {
+            try {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                
+                // Portfolio settings
+                document.getElementById('setting-portfolio-size').textContent = config.portfolio_size || '1000';
+                document.getElementById('setting-position-size').textContent = config.position_size_usd || '500';
+                document.getElementById('setting-max-positions').textContent = config.max_positions || '2';
+                document.getElementById('setting-max-daily-loss').textContent = config.max_daily_loss || '100';
+                
+                // Futures strategy
+                const futures = config.futures_strategy || {};
+                document.getElementById('setting-futures-enabled').textContent = futures.enabled ? 'Yes' : 'No';
+                document.getElementById('setting-long-threshold').textContent = futures.long_signal_threshold || '11';
+                document.getElementById('setting-short-threshold').textContent = futures.short_signal_threshold || '-12';
+                document.getElementById('setting-leverage').textContent = futures.leverage || '10';
+                
+                // Risk management
+                const risk = config.dollar_based_risk || {};
+                document.getElementById('setting-stop-loss').textContent = risk.stop_loss_usd || '100';
+                document.getElementById('setting-take-profit').textContent = risk.take_profit_usd || '200';
+                document.getElementById('setting-trailing-stop').textContent = risk.trailing_stop_usd || '50';
+                document.getElementById('setting-min-signal').textContent = futures.min_signal_strength || '4';
+                
+            } catch (error) {
+                console.error('Error loading settings:', error);
+            }
+        }
+
+        // Form submission
+        document.getElementById('backtestForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const fromDate = document.getElementById('fromDate').value;
+            const toDate = document.getElementById('toDate').value;
+            
+            if (!fromDate || !toDate) {
+                alert('Please select both from and to dates');
+                return;
+            }
+            
+            if (new Date(fromDate) >= new Date(toDate)) {
+                alert('From date must be before to date');
+                return;
+            }
+            
+            // Check date range (max 1 year)
+            const diffTime = Math.abs(new Date(toDate) - new Date(fromDate));
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            if (diffDays > 365) {
+                alert('Date range cannot exceed 1 year');
+                return;
+            }
+            
+            await runBacktest(fromDate, toDate);
+        });
+
+        // Reset button
+        document.getElementById('resetBtn').addEventListener('click', function() {
+            document.getElementById('backtestResults').style.display = 'none';
+            document.getElementById('progressSection').style.display = 'none';
+            backtestData = null;
+            
+            if (equityChart) {
+                equityChart.destroy();
+                equityChart = null;
+            }
+            if (tradeDistributionChart) {
+                tradeDistributionChart.destroy();
+                tradeDistributionChart = null;
+            }
+        });
+
+        // Run backtest (using direct approach)
+        async function runBacktest(fromDate, toDate) {
+            const runBtn = document.getElementById('runBacktestBtn');
+            const progressSection = document.getElementById('progressSection');
+            const resultsSection = document.getElementById('backtestResults');
+            
+            // Show progress
+            runBtn.disabled = true;
+            progressSection.style.display = 'block';
+            resultsSection.style.display = 'none';
+            
+            // Simulate progress updates
+            updateProgress('Initializing backtest...', 0);
+            
+            try {
+                // Show progress steps
+                updateProgress('Fetching historical data...', 20);
+                await new Promise(resolve => setTimeout(resolve, 500)); // Small delay for UX
+                
+                updateProgress('Running backtest analysis...', 50);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                updateProgress('Calculating results...', 80);
+                
+                const response = await fetch('/api/backtest/debug', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        from_date: fromDate,
+                        to_date: toDate
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    updateProgress('Backtest completed', 100);
+                    backtestData = result.results;
+                    displayResults(result.results);
+                    progressSection.style.display = 'none';
+                    resultsSection.style.display = 'block';
+                } else {
+                    throw new Error(result.error);
+                }
+                
+            } catch (error) {
+                console.error('Backtest error:', error);
+                alert('Error running backtest: ' + error.message);
+                progressSection.style.display = 'none';
+            } finally {
+                runBtn.disabled = false;
+            }
+        }
+
+        // Update progress
+        function updateProgress(step, progress) {
+            document.getElementById('progressText').textContent = step;
+            document.getElementById('progressPercent').textContent = Math.round(progress) + '%';
+            document.getElementById('progressBar').style.width = progress + '%';
+        }
+
+        // Display results
+        function displayResults(results) {
+            console.log('displayResults called with:', results);
+            
+            if (!results.summary || !results.trade_stats || !results.risk_metrics) {
+                throw new Error('Missing required result sections: ' + 
+                    JSON.stringify({
+                        has_summary: !!results.summary,
+                        has_trade_stats: !!results.trade_stats, 
+                        has_risk_metrics: !!results.risk_metrics
+                    }));
+            }
+            
+            const summary = results.summary;
+            const tradeStats = results.trade_stats;
+            const riskMetrics = results.risk_metrics;
+            
+            // Summary metrics
+            document.getElementById('totalReturn').textContent = summary.total_return_pct.toFixed(2) + '%';
+            document.getElementById('totalPnL').textContent = summary.total_pnl.toFixed(2);
+            document.getElementById('winRate').textContent = tradeStats.win_rate_pct.toFixed(1) + '%';
+            document.getElementById('winningTrades').textContent = tradeStats.winning_trades;
+            document.getElementById('totalTrades').textContent = tradeStats.total_trades;
+            document.getElementById('maxDrawdown').textContent = '-' + riskMetrics.max_drawdown_pct.toFixed(2) + '%';
+            document.getElementById('profitFactor').textContent = tradeStats.profit_factor.toFixed(2);
+            
+            // Set colors based on values
+            document.getElementById('totalReturn').className = summary.total_return_pct >= 0 ? 'metric-positive' : 'metric-negative';
+            document.getElementById('profitFactor').className = tradeStats.profit_factor > 1 ? 'metric-positive' : 'metric-negative';
+            
+            // Detailed metrics
+            document.getElementById('initialCapital').textContent = summary.initial_capital.toFixed(2);
+            document.getElementById('finalCapital').textContent = summary.final_capital.toFixed(2);
+            document.getElementById('annualizedReturn').textContent = summary.annualized_return_pct.toFixed(2) + '%';
+            document.getElementById('sharpeRatio').textContent = riskMetrics.sharpe_ratio.toFixed(2);
+            document.getElementById('calmarRatio').textContent = riskMetrics.calmar_ratio.toFixed(2);
+            
+            document.getElementById('avgTrade').textContent = tradeStats.avg_trade_pnl.toFixed(2);
+            document.getElementById('avgWin').textContent = tradeStats.avg_win.toFixed(2);
+            document.getElementById('avgLoss').textContent = tradeStats.avg_loss.toFixed(2);
+            document.getElementById('largestWin').textContent = tradeStats.largest_win.toFixed(2);
+            document.getElementById('largestLoss').textContent = tradeStats.largest_loss.toFixed(2);
+            
+            // Trade statistics
+            document.getElementById('totalTradesDetailed').textContent = tradeStats.total_trades;
+            document.getElementById('winningTradesDetailed').textContent = tradeStats.winning_trades;
+            document.getElementById('losingTrades').textContent = tradeStats.losing_trades;
+            document.getElementById('winLossRatio').textContent = riskMetrics.win_loss_ratio.toFixed(2);
+            document.getElementById('avgDuration').textContent = tradeStats.avg_duration_hours.toFixed(1);
+            document.getElementById('maxConsecutiveWins').textContent = tradeStats.max_consecutive_wins;
+            document.getElementById('maxConsecutiveLosses').textContent = tradeStats.max_consecutive_losses;
+            document.getElementById('backtestDuration').textContent = summary.backtest_duration_days;
+            
+            // Create charts
+            createEquityChart(results.equity_curve);
+            createTradeDistributionChart(tradeStats.winning_trades, tradeStats.losing_trades);
+            
+            // Populate trades table
+            populateTradesTable(results.trades);
+        }
+
+        // Create equity curve chart
+        function createEquityChart(equityCurve) {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            
+            if (equityChart) {
+                equityChart.destroy();
+            }
+            
+            const labels = equityCurve.map(point => new Date(point.timestamp).toLocaleDateString());
+            const data = equityCurve.map(point => point.capital);
+            
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Portfolio Value',
+                        data: data,
+                        borderColor: '#007bff',
+                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                        tension: 0.1,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#ffffff'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                color: '#ffffff'
+                            },
+                            grid: {
+                                color: '#333333'
+                            }
+                        },
+                        y: {
+                            ticks: {
+                                color: '#ffffff',
+                                callback: function(value) {
+                                    return '$' + value.toFixed(0);
+                                }
+                            },
+                            grid: {
+                                color: '#333333'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Create trade distribution chart
+        function createTradeDistributionChart(winningTrades, losingTrades) {
+            const ctx = document.getElementById('tradeDistributionChart').getContext('2d');
+            
+            if (tradeDistributionChart) {
+                tradeDistributionChart.destroy();
+            }
+            
+            tradeDistributionChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Winning Trades', 'Losing Trades'],
+                    datasets: [{
+                        data: [winningTrades, losingTrades],
+                        backgroundColor: ['#28a745', '#dc3545'],
+                        borderWidth: 2,
+                        borderColor: '#333333'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#ffffff'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Populate trades table
+        function populateTradesTable(trades) {
+            const tbody = document.getElementById('tradesTableBody');
+            tbody.innerHTML = '';
+            
+            trades.forEach(trade => {
+                const row = tbody.insertRow();
+                const pnlClass = trade.pnl >= 0 ? 'text-success' : 'text-danger';
+                
+                row.innerHTML = `
+                    <td>${new Date(trade.entry_time).toLocaleString()}</td>
+                    <td>${trade.exit_time ? new Date(trade.exit_time).toLocaleString() : '--'}</td>
+                    <td><span class="badge bg-${trade.side === 'long' ? 'success' : 'danger'}">${trade.side.toUpperCase()}</span></td>
+                    <td>$${trade.entry_price.toFixed(2)}</td>
+                    <td>$${trade.exit_price ? trade.exit_price.toFixed(2) : '--'}</td>
+                    <td>${trade.position_size.toFixed(4)}</td>
+                    <td class="${pnlClass}">$${trade.pnl.toFixed(2)}</td>
+                    <td>${trade.signal_type} (${trade.signal_strength})</td>
+                    <td>${trade.exit_reason || '--'}</td>
+                `;
+            });
+        }
+
+        // Export CSV
+        document.getElementById('exportBtn').addEventListener('click', function() {
+            if (!backtestData || !backtestData.trades) {
+                alert('No trade data to export');
+                return;
+            }
+            
+            const csv = generateCSV(backtestData.trades);
+            downloadCSV(csv, 'backtest_results.csv');
+        });
+
+        function generateCSV(trades) {
+            const headers = ['Entry Time', 'Exit Time', 'Side', 'Entry Price', 'Exit Price', 'Position Size', 'P&L', 'Signal Type', 'Signal Strength', 'Exit Reason'];
+            let csv = headers.join(',') + '\n';
+            
+            trades.forEach(trade => {
+                const row = [
+                    trade.entry_time,
+                    trade.exit_time || '',
+                    trade.side,
+                    trade.entry_price,
+                    trade.exit_price || '',
+                    trade.position_size,
+                    trade.pnl,
+                    trade.signal_type,
+                    trade.signal_strength,
+                    trade.exit_reason || ''
+                ].map(field => `"${field}"`).join(',');
+                csv += row + '\n';
+            });
+            
+            return csv;
+        }
+
+        function downloadCSV(csv, filename) {
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>

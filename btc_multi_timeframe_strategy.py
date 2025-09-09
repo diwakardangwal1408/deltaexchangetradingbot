@@ -3,6 +3,7 @@ import numpy as np
 from datetime import datetime
 import logging
 from delta_exchange_client import DeltaExchangeClient
+from logger_config import get_logger
 
 class BTCMultiTimeframeStrategy:
     """
@@ -54,9 +55,8 @@ class BTCMultiTimeframeStrategy:
             'last_candle_time': None       # Time of last processed 1H candle
         }
         
-        # Setup logging
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
+        # Setup logging using centralized configuration
+        self.logger = get_logger(__name__, 'INFO', 'delta_btc_trading.log')
         
     def fetch_multi_timeframe_data(self):
         """Fetch data for both timeframes"""
@@ -467,7 +467,6 @@ class BTCMultiTimeframeStrategy:
             self.signal_data_3m['Volume_SMA'] = self.signal_data_3m['Volume'].rolling(window=self.signal_volume_period).mean()
             self.signal_data_3m['Volume_Ratio'] = self.signal_data_3m['Volume'] / self.signal_data_3m['Volume_SMA']
             
-            self.logger.info("3m indicators calculated successfully")
             
         except Exception as e:
             self.logger.error(f"Error calculating 3m indicators: {e}")
@@ -475,18 +474,26 @@ class BTCMultiTimeframeStrategy:
     def generate_3m_signals(self):
         """Generate entry signals on 3-minute timeframe (only in 1H trend direction)"""
         try:
-            if self.signal_data_3m.empty or self.current_trend == 'NEUTRAL':
-                return {'signal': 0, 'strength': 0, 'type': 'NONE', 'reason': 'No 1H trend or data'}
+            if self.signal_data_3m.empty:
+                return {'signal': 0, 'strength': 0, 'type': 'NONE', 'reason': 'No data'}
             
             latest = self.signal_data_3m.iloc[-1]
             
-            # Only generate signals in 1H trend direction (stronger trend filter)
+            # Generate signals in 1H trend direction
             if self.current_trend == 'BULLISH':
                 return self._generate_bullish_signal(latest)
             elif self.current_trend == 'BEARISH':
                 return self._generate_bearish_signal(latest)
+            else:  # NEUTRAL - evaluate both signals
+                bullish = self._generate_bullish_signal(latest)
+                bearish = self._generate_bearish_signal(latest)
+                # Return the stronger signal
+                if abs(bullish.get('strength', 0)) >= abs(bearish.get('strength', 0)):
+                    return bullish
+                else:
+                    return bearish
             
-            return {'signal': 0, 'strength': 0, 'type': 'NONE', 'reason': 'Neutral 1H trend'}
+            return {'signal': 0, 'strength': 0, 'type': 'NONE', 'reason': 'No signals generated'}
             
         except Exception as e:
             self.logger.error(f"Error generating 3m signals: {e}")

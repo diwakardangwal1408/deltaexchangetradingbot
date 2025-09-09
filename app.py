@@ -4,7 +4,7 @@ import os
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import asyncio
 import logging
 import pandas as pd
@@ -13,13 +13,29 @@ from delta_exchange_client import DeltaExchangeClient
 from delta_btc_strategy import DeltaBTCOptionsTrader
 from btc_multi_timeframe_strategy import BTCMultiTimeframeStrategy
 from config_manager import config_manager
+from logger_config import get_logger
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'  # Change this to a random secret key
 
+# Initialize logger for Flask app
+try:
+    config = config_manager.get_all_config()
+    logging_config = config.get('logging', {})
+    console_level = logging_config.get('console_level', 'INFO')
+    log_file = logging_config.get('log_file', 'delta_btc_trading.log')
+    app_logger = get_logger('flask_app', console_level, log_file)
+except Exception as e:
+    app_logger = get_logger('flask_app', 'INFO', 'delta_btc_trading.log')
+    app_logger.warning(f"Could not load logging config, using defaults: {e}")
+
 # Global variables for bot management
 trading_bot_process = None
 bot_running = False
+
+# Global client cache for reuse
+_cached_delta_client = None
+_cached_strategy = None
 
 def get_real_time_market_timestamp():
     """Get current market timestamp from Delta Exchange ticker API"""
@@ -38,13 +54,32 @@ def get_real_time_market_timestamp():
     return datetime.now().isoformat()
 
 def get_delta_client():
-    """Get Delta Exchange client instance"""
-    config = config_manager.get_all_config()
-    return DeltaExchangeClient(
-        api_key=config['api_key'],
-        api_secret=config['api_secret'],
-        paper_trading=config.get('paper_trading', True)
-    )
+    """Get Delta Exchange client instance (cached for reuse)"""
+    global _cached_delta_client
+    
+    if _cached_delta_client is None:
+        config = config_manager.get_all_config()
+        _cached_delta_client = DeltaExchangeClient(
+            api_key=config['api_key'],
+            api_secret=config['api_secret'],
+            paper_trading=config.get('paper_trading', False)
+        )
+    
+    return _cached_delta_client
+
+def get_strategy():
+    """Get BTCMultiTimeframeStrategy instance (cached for reuse)"""
+    global _cached_strategy
+    
+    if _cached_strategy is None:
+        config = config_manager.get_all_config()
+        _cached_strategy = BTCMultiTimeframeStrategy(
+            api_key=config['api_key'],
+            api_secret=config['api_secret'],
+            paper_trading=config.get('paper_trading', False)
+        )
+    
+    return _cached_strategy
 
 def get_btc_data(timeframe='5m'):
     """Get BTC data and calculate indicators"""
@@ -594,7 +629,7 @@ def load_config():
     try:
         return config_manager.get_all_config()
     except Exception as e:
-        print(f"Error loading config: {e}")
+        app_logger.error(f"Error loading config: {e}")
         return {}
 
 def save_config(config):
@@ -602,23 +637,23 @@ def save_config(config):
     try:
         return config_manager.save_config(config)
     except Exception as e:
-        print(f"Error saving config: {e}")
+        app_logger.error(f"Error saving config: {e}")
         return False
 
-def test_api_connection(api_key, api_secret, paper_trading=True):
+def test_api_connection(api_key, api_secret, paper_trading=False):
     """Test API connection with detailed error reporting - NO FALLBACKS"""
     try:
-        print(f"Creating client with paper_trading={paper_trading}")
+        app_logger.info(f"Creating client with paper_trading={paper_trading}")
         client = DeltaExchangeClient(api_key, api_secret, paper_trading)
         
-        print("Testing BTC price retrieval...")
+        app_logger.info("Testing BTC price retrieval...")
         btc_price = client.get_current_btc_price()
         
-        print(f"BTC price test successful: ${btc_price:,.2f}")
+        app_logger.info(f"BTC price test successful: ${btc_price:,.2f}")
         return True, btc_price
             
     except Exception as e:
-        print(f"API connection test failed: {e}")
+        app_logger.error(f"API connection test failed: {e}")
         return False, str(e)
 
 @app.route('/')
@@ -634,7 +669,7 @@ def dashboard():
             client = DeltaExchangeClient(
                 config['api_key'], 
                 config['api_secret'], 
-                config.get('paper_trading', True)
+                config.get('paper_trading', False)
             )
             
             # Test connection by getting BTC price
@@ -703,14 +738,14 @@ def save_settings():
             }
         }
         
-        print(f"DEBUG: Attempting to save config...")
-        print(f"DEBUG: Sample values - API Key: {config.get('api_key', '')[:10]}..., Portfolio Size: {config.get('portfolio_size')}")
+        app_logger.debug(f"DEBUG: Attempting to save config...")
+        app_logger.debug(f"DEBUG: Sample values - API Key: {config.get('api_key', '')[:10]}..., Portfolio Size: {config.get('portfolio_size')}")
         
         if save_config(config):
-            print(f"DEBUG: Configuration saved successfully!")
+            app_logger.debug(f"DEBUG: Configuration saved successfully!")
             flash('Settings saved successfully!', 'success')
         else:
-            print(f"DEBUG: Configuration save failed!")
+            app_logger.debug(f"DEBUG: Configuration save failed!")
             flash('Error saving settings!', 'error')
             
     except Exception as e:
@@ -1239,6 +1274,16 @@ def api_signal_data():
 @app.route('/api/higher_timeframe_trend')
 def api_higher_timeframe_trend():
     """Get higher timeframe trend data with full indicator analysis"""
+    # Calculate the last 1h candle close time based on Delta Exchange timing
+    # Delta Exchange 1h candles close at :30 past each hour (5:30, 6:30, 7:30, etc.)
+    # This aligns with their contract start time of 5:30 PM IST
+    current_time = datetime.now()
+    last_hour_close = current_time.replace(minute=30, second=0, microsecond=0)
+    
+    # If we haven't reached :30 past the hour yet, go back to previous hour's :30
+    if current_time.minute < 30:
+        last_hour_close = last_hour_close - timedelta(hours=1)
+    
     try:
         # Get 1-hour data with full technical analysis
         df_1h = get_btc_data(timeframe='1h')
@@ -1461,7 +1506,7 @@ def api_higher_timeframe_trend():
                     'trend_strength': trend_strength,
                     'total_score': total_score,
                     'max_score': 15,
-                    'candle_close_time': get_real_time_market_timestamp(),
+                    'candle_close_time': last_hour_close.isoformat(),
                     'indicators': {
                         'fisher': {
                             'value': fisher.iloc[-1] if not pd.isna(fisher.iloc[-1]) else None,
@@ -1501,7 +1546,7 @@ def api_higher_timeframe_trend():
                     'trend_strength': 'Unknown',
                     'total_score': 0,
                     'max_score': 15,
-                    'candle_close_time': get_real_time_market_timestamp(),
+                    'candle_close_time': last_hour_close.isoformat(),
                     'indicators': {
                         'fisher': {'value': None, 'score': 0, 'meaning': 'Data unavailable'},
                         'tsi': {'value': None, 'score': 0, 'meaning': 'Data unavailable'},
@@ -1519,7 +1564,7 @@ def api_higher_timeframe_trend():
                 'trend_strength': 'Unknown',
                 'total_score': 0,
                 'max_score': 15,
-                'candle_close_time': get_real_time_market_timestamp(),
+                'candle_close_time': last_hour_close.isoformat(),
                 'indicators': {
                     'fisher': {'value': None, 'score': 0, 'meaning': 'No data'},
                     'tsi': {'value': None, 'score': 0, 'meaning': 'No data'},
@@ -1537,7 +1582,7 @@ def api_higher_timeframe_trend():
             'trend_strength': 'Error',
             'total_score': 0,
             'max_score': 15,
-            'candle_close_time': datetime.now().isoformat(),
+            'candle_close_time': last_hour_close.isoformat(),
             'indicators': {
                 'fisher': {'value': None, 'score': 0, 'meaning': 'Connection error'},
                 'tsi': {'value': None, 'score': 0, 'meaning': 'Connection error'},
@@ -1624,6 +1669,296 @@ def stop_bot():
         })
 
 # All Excel formatting functions removed - using Delta Exchange only
+
+@app.route('/backtesting')
+def backtesting():
+    """Backtesting page"""
+    return render_template('backtesting.html')
+
+@app.route('/api/backtest/simple', methods=['POST'])
+def api_backtest_simple():
+    """Simple non-streaming backtest endpoint"""
+    import json
+    from backtest_engine import BacktestEngine
+    
+    try:
+        data = request.get_json()
+        from_date = data.get('from_date', '2024-01-01')
+        to_date = data.get('to_date', '2024-01-31')
+        
+        # Run backtest with existing cached clients
+        delta_client = get_delta_client()
+        strategy = get_strategy()
+        engine = BacktestEngine(delta_client=delta_client, strategy=strategy)
+        historical_data = engine.fetch_historical_data(from_date, to_date)
+        results = engine.run_backtest(historical_data)
+        
+        # Return simple results
+        simple_results = {
+            'total_trades': results.get('trade_stats', {}).get('total_trades', 0),
+            'total_pnl': results.get('summary', {}).get('total_pnl', 0.0),
+            'win_rate': results.get('trade_stats', {}).get('win_rate_pct', 0.0)
+        }
+        
+        return json.dumps({'success': True, 'results': simple_results})
+        
+    except Exception as e:
+        return json.dumps({'success': False, 'error': str(e)})
+
+@app.route('/api/backtest/test', methods=['POST'])
+def api_backtest_test():
+    """Simple test endpoint"""
+    import json
+    from flask import Response
+    
+    def generate_test():
+        yield f"data: {json.dumps({'step': 'Test step 1', 'progress': 25})}\n\n"
+        yield f"data: {json.dumps({'step': 'Test step 2', 'progress': 50})}\n\n"
+        yield f"data: {json.dumps({'step': 'Test step 3', 'progress': 75})}\n\n"
+        yield f"data: {json.dumps({'step': 'Test completed', 'progress': 100, 'results': {{'test': 'success'}}})}\n\n"
+    
+    response = Response(generate_test(), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['Connection'] = 'keep-alive'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
+
+@app.route('/api/backtest/run', methods=['POST'])
+def api_backtest_run():
+    """Run backtest with streaming progress updates"""
+    import json
+    from flask import Response
+    from backtest_engine import BacktestEngine
+    import time
+    
+    app_logger.info("DEBUG: Backtest request received")
+    
+    # Extract request data outside of generator to avoid context issues
+    try:
+        data = request.get_json()
+        from_date = data.get('from_date')
+        to_date = data.get('to_date')
+        
+        if not from_date or not to_date:
+            return Response(
+                f"data: {json.dumps({'error': 'Missing date parameters'})}\n\n",
+                mimetype='text/plain'
+            )
+    except Exception as e:
+        return Response(
+            f"data: {json.dumps({'error': f'Request parsing failed: {str(e)}'})}\n\n",
+            mimetype='text/plain'
+        )
+    
+    def generate_backtest(from_date, to_date):
+        try:
+            
+            # Initialize backtest engine with existing cached clients
+            delta_client = get_delta_client()
+            strategy = get_strategy()
+            engine = BacktestEngine(delta_client=delta_client, strategy=strategy)
+            
+            # Progress callback for streaming updates
+            def progress_callback(progress_data):
+                yield f"data: {json.dumps(progress_data)}\n\n"
+            
+            # Fetch historical data with progress updates
+            yield f"data: {json.dumps({'step': 'Initializing backtest', 'progress': 0})}\n\n"
+            time.sleep(0.1)  # Small delay to ensure message is sent
+            
+            try:
+                # Fetch historical data
+                def data_progress(progress_info):
+                    pass  # We'll handle progress inline
+                
+                yield f"data: {json.dumps({'step': 'Fetching historical data', 'progress': 10})}\n\n"
+                historical_data = engine.fetch_historical_data(from_date, to_date)
+                
+                yield f"data: {json.dumps({'step': 'Data fetched successfully', 'progress': 30})}\n\n"
+                
+                # Run backtest with progress updates
+                def backtest_progress(progress_info):
+                    pass  # We'll handle progress inline
+                
+                yield f"data: {json.dumps({'step': 'Analyzing historical candles', 'progress': 40})}\n\n"
+                yield f"data: {json.dumps({'step': 'Generating trading signals', 'progress': 50})}\n\n"
+                yield f"data: {json.dumps({'step': 'Simulating trade execution', 'progress': 70})}\n\n"
+                results = engine.run_backtest(historical_data)
+                
+                yield f"data: {json.dumps({'step': 'Calculating performance metrics', 'progress': 90})}\n\n"
+                
+                # Debug: Check if results is valid
+                app_logger.info(f"DEBUG: Results type: {type(results)}")
+                app_logger.info(f"DEBUG: Results keys: {results.keys() if isinstance(results, dict) else 'Not a dict'}")
+                
+                # Check if results contain large DataFrames
+                if isinstance(results, dict):
+                    for key, value in results.items():
+                        if hasattr(value, 'shape'):  # DataFrame or numpy array
+                            app_logger.info(f"DEBUG: {key} shape: {value.shape}")
+                        elif isinstance(value, (list, tuple)):
+                            app_logger.info(f"DEBUG: {key} length: {len(value)}")
+                        else:
+                            app_logger.info(f"DEBUG: {key} type: {type(value)}")
+                
+                app_logger.info("DEBUG: Reached make_json_safe section - about to define function")
+                
+                # Send final results with comprehensive error handling
+                def make_json_safe(obj):
+                    """Recursively convert objects to JSON-safe types"""
+                    if isinstance(obj, dict):
+                        return {str(k): make_json_safe(v) for k, v in obj.items()}
+                    elif isinstance(obj, (list, tuple)):
+                        return [make_json_safe(item) for item in obj]
+                    elif hasattr(obj, 'isoformat'):  # datetime objects
+                        return obj.isoformat()
+                    elif hasattr(obj, 'item'):  # numpy scalars
+                        return obj.item()
+                    elif hasattr(obj, 'tolist'):  # numpy arrays
+                        return obj.tolist()
+                    elif obj is None or isinstance(obj, (str, int, float, bool)):
+                        return obj
+                    else:
+                        return str(obj)
+                
+                try:
+                    app_logger.info("DEBUG: Entered try block for JSON processing")
+                    # Convert results to JSON-safe format with size limits
+                    app_logger.info("DEBUG: About to call make_json_safe")
+                    safe_results = make_json_safe(results)
+                    app_logger.info("DEBUG: make_json_safe completed")
+                    
+                    # Limit large arrays/DataFrames to prevent huge JSON payloads
+                    if 'trades' in safe_results and isinstance(safe_results['trades'], list):
+                        # Limit to last 100 trades for display
+                        if len(safe_results['trades']) > 100:
+                            safe_results['trades_count'] = len(safe_results['trades'])
+                            safe_results['trades'] = safe_results['trades'][-100:]
+                            app_logger.info(f"Limited trades display to last 100 out of {safe_results['trades_count']} total trades")
+                    
+                    if 'equity_curve' in safe_results and isinstance(safe_results['equity_curve'], list):
+                        # Limit equity curve to every 10th point for charting
+                        if len(safe_results['equity_curve']) > 1000:
+                            original_len = len(safe_results['equity_curve'])
+                            safe_results['equity_curve'] = safe_results['equity_curve'][::10]  # Every 10th point
+                            app_logger.info(f"Limited equity curve display to {len(safe_results['equity_curve'])} points out of {original_len} total")
+                    
+                    # Debug: Check safe_results content
+                    app_logger.info(f"DEBUG: safe_results type: {type(safe_results)}")
+                    if isinstance(safe_results, dict):
+                        app_logger.info(f"DEBUG: safe_results keys: {list(safe_results.keys())}")
+                        for key, value in safe_results.items():
+                            if isinstance(value, (list, tuple)):
+                                app_logger.info(f"DEBUG: safe_results[{key}] length: {len(value)}")
+                            else:
+                                app_logger.info(f"DEBUG: safe_results[{key}] type: {type(value)}")
+                    
+                    # Check JSON size before sending
+                    final_payload = {'step': 'Backtest completed', 'progress': 100, 'results': safe_results}
+                    json_str = json.dumps(final_payload)
+                    json_size_mb = len(json_str.encode('utf-8')) / (1024 * 1024)
+                    app_logger.info(f"Sending backtest results - JSON size: {json_size_mb:.2f} MB")
+                    app_logger.info(f"DEBUG: JSON string length: {len(json_str)} characters")
+                    app_logger.info(f"DEBUG: First 200 chars of JSON: {json_str[:200]}")
+                    
+                    if json_size_mb > 10:  # If larger than 10MB, send summary only
+                        app_logger.warning(f"Results too large ({json_size_mb:.2f} MB), sending summary only")
+                        summary_only = {
+                            'summary': safe_results.get('summary', {}),
+                            'trade_stats': safe_results.get('trade_stats', {}),
+                            'risk_metrics': safe_results.get('risk_metrics', {}),
+                            'settings_used': safe_results.get('settings_used', {}),
+                            'size_warning': f'Full results too large ({json_size_mb:.2f} MB) - showing summary only'
+                        }
+                        final_response = f"data: {json.dumps({'step': 'Backtest completed', 'progress': 100, 'results': summary_only})}\n\n"
+                        app_logger.info(f"DEBUG: About to yield summary response, length: {len(final_response)}")
+                        yield final_response
+                        app_logger.info("DEBUG: Summary response yielded successfully")
+                    else:
+                        final_response = f"data: {json.dumps({'step': 'Backtest completed', 'progress': 100, 'results': safe_results})}\n\n"
+                        app_logger.info(f"DEBUG: About to yield full response, length: {len(final_response)}")
+                        yield final_response
+                        app_logger.info("DEBUG: Full response yielded successfully")
+                except Exception as json_error:
+                    app_logger.error(f"DEBUG: JSON serialization error: {json_error}")
+                    # Send minimal summary if all else fails
+                    minimal_summary = {
+                        'summary': {
+                            'total_trades': 0,
+                            'total_pnl': 0.0,
+                            'total_return_pct': 0.0,
+                            'error': 'Results processing failed'
+                        }
+                    }
+                    try:
+                        # Try to extract basic info safely
+                        if isinstance(results, dict):
+                            trade_stats = results.get('trade_stats', {})
+                            summary = results.get('summary', {})
+                            minimal_summary['summary'].update({
+                                'total_trades': int(trade_stats.get('total_trades', 0)) if trade_stats.get('total_trades') is not None else 0,
+                                'total_pnl': float(summary.get('total_pnl', 0.0)) if summary.get('total_pnl') is not None else 0.0,
+                                'total_return_pct': float(summary.get('total_return_pct', 0.0)) if summary.get('total_return_pct') is not None else 0.0
+                            })
+                    except:
+                        pass
+                    yield f"data: {json.dumps({'step': 'Backtest completed', 'progress': 100, 'results': minimal_summary})}\n\n"
+                
+            except Exception as e:
+                logging.error(f"Backtest error: {e}")
+                yield f"data: {json.dumps({'error': f'Backtest failed: {str(e)}'})}\n\n"
+                
+        except Exception as e:
+            logging.error(f"Backtest setup error: {e}")
+            yield f"data: {json.dumps({'error': f'Setup failed: {str(e)}'})}\n\n"
+    
+    # Return Server-Sent Events response
+    response = Response(
+        generate_backtest(from_date, to_date),
+        mimetype='text/event-stream'
+    )
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+@app.route('/api/backtest/debug', methods=['POST'])
+def api_backtest_debug():
+    """Debug non-streaming backtest for troubleshooting"""
+    try:
+        data = request.get_json()
+        from_date = data.get('from_date')
+        to_date = data.get('to_date')
+        
+        if not from_date or not to_date:
+            return {'success': False, 'error': 'Missing date parameters'}
+        
+        # Get clients
+        delta_client = get_delta_client()
+        strategy = get_strategy()
+        
+        # Run backtest
+        from backtest_engine import BacktestEngine
+        engine = BacktestEngine(delta_client=delta_client, strategy=strategy)
+        historical_data = engine.fetch_historical_data(from_date, to_date)
+        results = engine.run_backtest(historical_data)
+        
+        app_logger.info(f"Debug backtest completed, results keys: {list(results.keys()) if isinstance(results, dict) else 'not dict'}")
+        
+        return {'success': True, 'results': results}
+        
+    except Exception as e:
+        app_logger.error(f"Debug backtest error: {e}")
+        return {'success': False, 'error': str(e)}
+
+@app.route('/api/config')
+def api_config():
+    """Get current configuration for backtesting"""
+    try:
+        config = config_manager.get_all_config()
+        return jsonify(config)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Ensure templates and static directories exist

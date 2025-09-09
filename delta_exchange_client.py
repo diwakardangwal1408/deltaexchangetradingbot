@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 import pandas as pd
 import logging
+from logger_config import get_logger
 
 class DeltaExchangeClient:
     """
@@ -30,9 +31,8 @@ class DeltaExchangeClient:
         
         # No need for delta-rest-client since we use custom implementation
         
-        # Setup logging
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
+        # Setup logging using centralized configuration
+        self.logger = get_logger(__name__, 'INFO', 'delta_btc_trading.log')
         
         # Cache for products and options
         self.products = {}
@@ -116,6 +116,38 @@ class DeltaExchangeClient:
             self.logger.error(error_msg)
             raise Exception(error_msg)
     
+    def test_connectivity(self):
+        """Test basic connectivity to Delta Exchange API"""
+        try:
+            self.logger.info(f"Testing connectivity to {self.base_url}")
+            response = self.session.get(f"{self.base_url}/v2/tickers/BTCUSD", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success'):
+                    btc_price = data['result']['close']
+                    self.logger.info(f"✅ API connectivity test successful - BTC Price: ${btc_price:,.2f}")
+                    return True, btc_price
+                else:
+                    error_msg = f"API returned success=false: {data}"
+                    self.logger.error(f"❌ {error_msg}")
+                    return False, error_msg
+            else:
+                error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                self.logger.error(f"❌ API connectivity test failed - {error_msg}")
+                return False, error_msg
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Connection error (DNS/Network): {str(e)}"
+            self.logger.error(f"❌ {error_msg}")
+            return False, error_msg
+        except requests.exceptions.Timeout as e:
+            error_msg = f"Request timeout: {str(e)}"
+            self.logger.error(f"❌ {error_msg}")
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            self.logger.error(f"❌ {error_msg}")
+            return False, error_msg
+
     def _make_public_request(self, endpoint, params=None):
         """Make public (unauthenticated) request - NO FALLBACKS"""
         url = self.base_url + endpoint

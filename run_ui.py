@@ -14,7 +14,7 @@ from app import app
 def check_dependencies():
     """Check if all required dependencies are installed"""
     required_modules = [
-        'flask', 'pandas', 'numpy', 'yfinance', 'requests'
+        'flask', 'pandas', 'numpy', 'yfinance', 'requests', 'waitress'
     ]
     
     missing_modules = []
@@ -107,14 +107,28 @@ def main():
         browser_thread.start()
     
     try:
-        # Start Flask application
-        app.run(
-            host=host,
-            port=port,
-            debug=debug,
-            use_reloader=False,  # Disable reloader to prevent browser opening twice
-            threaded=True
-        )
+        # Use production WSGI server (Waitress) instead of Flask dev server
+        if debug:
+            print("DEBUG mode: Using Flask development server")
+            app.run(
+                host=host,
+                port=port,
+                debug=debug,
+                use_reloader=False,
+                threaded=True
+            )
+        else:
+            print("PRODUCTION mode: Using Waitress WSGI server")
+            from waitress import serve
+            serve(
+                app, 
+                host=host, 
+                port=port, 
+                threads=6,  # Handle multiple concurrent requests
+                connection_limit=100,
+                cleanup_interval=30,
+                channel_timeout=120
+            )
     except KeyboardInterrupt:
         print("\n\nWeb UI stopped")
     except Exception as e:
