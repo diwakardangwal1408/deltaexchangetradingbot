@@ -323,22 +323,6 @@
                             </div>
                         </div>
                         
-                        <div class="col-lg-4 col-md-6">
-                            <div class="card bg-dark border-secondary mb-3">
-                                <div class="card-body">
-                                    <h6><i class="bi bi-activity"></i> ATR (1H Volatility)</h6>
-                                    <div class="d-flex justify-content-between">
-                                        <span>State: <span id="atrState">--</span></span>
-                                        <span class="badge" id="atrScore">0/3</span>
-                                    </div>
-                                    <small class="text-muted d-block" id="atrMeaning">--</small>
-                                    <div class="mt-2">
-                                        <small class="text-muted">Current: <span id="atrCurrent">--</span></small><br>
-                                        <small class="text-muted">30-Period Avg: <span id="atrAverage">--</span></small>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                         
                         <div class="col-lg-4 col-md-6">
                             <div class="card bg-dark border-secondary mb-3">
@@ -359,6 +343,190 @@
                 <div id="trendError" class="text-center text-danger" style="display: none;">
                     <i class="bi bi-exclamation-triangle"></i><br>
                     <small id="trendErrorMessage">Failed to fetch trend data</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ATR Analysis Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="bi bi-activity"></i> ATR (Average True Range) Analysis
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <label for="atrTimeframeSelect" class="text-light mb-0">Timeframe:</label>
+                    <select id="atrTimeframeSelect" class="form-select form-select-sm" style="width: 100px;" onchange="onATRTimeframeChange()">
+                        <option value="5m">5 min</option>
+                        <option value="15m" selected>15 min</option>
+                        <option value="30m">30 min</option>
+                        <option value="1h">1 hour</option>
+                        <option value="4h">4 hour</option>
+                    </select>
+                    <button class="btn btn-outline-light btn-sm" onclick="refreshATR()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <!-- ATR Current Status -->
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <h6><i class="bi bi-speedometer2"></i> Current Status</h6>
+                                <div class="d-flex justify-content-between">
+                                    <span>State: <span id="atrState">--</span></span>
+                                    <span class="badge" id="atrScore">0/3</span>
+                                </div>
+                                <small class="text-muted d-block" id="atrMeaning">--</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ATR Values -->
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <h6><i class="bi bi-graph-up"></i> ATR Values</h6>
+                                <small class="text-muted">Current: <span id="atrCurrent">--</span></small><br>
+                                <small class="text-muted">30-Period Avg: <span id="atrAverage">--</span></small><br>
+                                <small class="text-muted">Timeframe: <span id="atrTimeframe">15m</span></small><br>
+                                <small class="text-muted">Period: <span id="atrAnalysisPeriod">960 candles</span></small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ATR Extremes -->
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <h6><i class="bi bi-bar-chart"></i> 10-Day Extremes</h6>
+                                <small class="text-success">Highest: <span id="atrHighest">--</span></small><br>
+                                <small class="text-success" id="atrHighestTime">--</small><br>
+                                <small class="text-danger">Lowest: <span id="atrLowest">--</span></small><br>
+                                <small class="text-danger" id="atrLowestTime">--</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ATR High Volatility & Timing -->
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <h6><i class="bi bi-exclamation-triangle"></i> High Volatility (><span id="atrThresholdPercentage">40%</span>)</h6>
+                                <small class="text-warning">Last Time: <span id="atrHighVolTime">--</span></small><br>
+                                <small class="text-warning">ATR Value: <span id="atrHighVolValue">--</span></small><br>
+                                <small class="text-warning">Excess: +<span id="atrHighVolExcess">--</span> pts</small><br>
+                                <small class="text-muted mt-2 d-block">Last Close: <span id="atrCandleClose">--</span></small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- ATR Information -->
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>ATR Analysis:</strong> Average True Range measures market volatility. High ATR suggests increased market movement and potential trading opportunities, while low ATR indicates consolidation periods. Analysis based on selected timeframe with 30-period moving average and 10-day historical extremes.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ADX Analysis Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="bi bi-compass"></i> ADX (Average Directional Index) Analysis
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <label for="adxTimeframeSelect" class="text-light mb-0">Timeframe:</label>
+                    <select id="adxTimeframeSelect" class="form-select form-select-sm" style="width: 100px;" onchange="onADXTimeframeChange()">
+                        <option value="5m">5 min</option>
+                        <option value="15m" selected>15 min</option>
+                        <option value="30m">30 min</option>
+                        <option value="1h">1 hour</option>
+                        <option value="4h">4 hour</option>
+                    </select>
+                    <button class="btn btn-outline-light btn-sm" onclick="refreshADX()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <!-- ADX Current Status -->
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <h6><i class="bi bi-speedometer2"></i> Current Status</h6>
+                                <div class="d-flex justify-content-between">
+                                    <span>State: <span id="adxState">--</span></span>
+                                    <span class="badge" id="adxScore">0/3</span>
+                                </div>
+                                <small class="text-muted d-block" id="adxMeaning">--</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ADX Values -->
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <h6><i class="bi bi-graph-up"></i> ADX Values</h6>
+                                <small class="text-muted">Current: <span id="adxCurrent">--</span></small><br>
+                                <small class="text-muted">30-Period Avg: <span id="adxAverage">--</span></small><br>
+                                <small class="text-muted">Timeframe: <span id="adxTimeframe">15m</span></small><br>
+                                <small class="text-muted">Period: <span id="adxAnalysisPeriod">960 candles</span></small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ADX Extremes -->
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <h6><i class="bi bi-bar-chart"></i> 10-Day Extremes</h6>
+                                <small class="text-success">Highest: <span id="adxHighest">--</span></small><br>
+                                <small class="text-success" id="adxHighestTime">--</small><br>
+                                <small class="text-danger">Lowest: <span id="adxLowest">--</span></small><br>
+                                <small class="text-danger" id="adxLowestTime">--</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ADX High Trend Strength -->
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card bg-dark border-secondary">
+                            <div class="card-body">
+                                <h6><i class="bi bi-exclamation-triangle"></i> High Trend Strength (><span id="adxThresholdPercentage">40%</span>)</h6>
+                                <small class="text-warning">Last Time: <span id="adxHighTrendTime">--</span></small><br>
+                                <small class="text-warning">ADX Value: <span id="adxHighTrendValue">--</span></small><br>
+                                <small class="text-warning">Excess: +<span id="adxHighTrendExcess">--</span> pts</small><br>
+                                <small class="text-muted mt-2 d-block">Last Close: <span id="adxCandleClose">--</span></small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- ADX Information -->
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>ADX Analysis:</strong> Average Directional Index measures trend strength regardless of direction. High ADX (>25) indicates strong trending markets, moderate ADX (20-25) suggests developing trends, while low ADX (<20) indicates ranging/sideways markets. Analysis based on selected timeframe with 30-period moving average and 10-day historical extremes.
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -704,12 +872,6 @@ function updateHigherTimeframeTrend() {
                 document.getElementById('dowMeaning').textContent = indicators.dow.meaning;
                 updateScoreBadge('dowScore', indicators.dow.score);
                 
-                // ATR (Average True Range)
-                document.getElementById('atrState').textContent = indicators.atr.state;
-                document.getElementById('atrMeaning').textContent = indicators.atr.meaning;
-                document.getElementById('atrCurrent').textContent = indicators.atr.current_value || '--';
-                document.getElementById('atrAverage').textContent = indicators.atr.average_value || '--';
-                updateScoreBadge('atrScore', indicators.atr.score);
                 
                 // Calculate next update time (next :30 past the hour for Delta Exchange candles)
                 const nextUpdate = new Date();
@@ -1086,7 +1248,287 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('refreshTrendAnalysis').addEventListener('click', function() {
         updateHigherTimeframeTrend();
     });
+    
+    // Initial ATR load
+    loadATRAnalysis();
+    
+    // Auto-refresh ATR every 2 minutes
+    setInterval(loadATRAnalysis, 120000);
+    
+    // Initial ADX load
+    loadADXAnalysis();
+    
+    // Auto-refresh ADX every 2 minutes
+    setInterval(loadADXAnalysis, 120000);
 });
+
+// ATR Analysis Functions
+function loadATRAnalysis(timeframe = null) {
+    // Get timeframe from dropdown if not provided
+    if (!timeframe) {
+        const dropdown = document.getElementById('atrTimeframeSelect');
+        timeframe = dropdown ? dropdown.value : '15m';
+    }
+    
+    const url = `/api/atr_analysis?timeframe=${timeframe}`;
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateATRDisplay(data.atr);
+            } else {
+                console.error('Failed to load ATR analysis:', data.message || 'Unknown error');
+                displayATRError(data.message || 'Failed to load ATR data');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching ATR analysis:', error);
+            displayATRError('Connection error');
+        });
+}
+
+function refreshATR() {
+    loadATRAnalysis();
+}
+
+function onATRTimeframeChange() {
+    // Load ATR data for the selected timeframe
+    const dropdown = document.getElementById('atrTimeframeSelect');
+    const selectedTimeframe = dropdown.value;
+    console.log('ATR timeframe changed to:', selectedTimeframe);
+    loadATRAnalysis(selectedTimeframe);
+}
+
+function updateATRDisplay(atr) {
+    // Update current status
+    document.getElementById('atrState').textContent = atr.state || '--';
+    document.getElementById('atrMeaning').textContent = atr.meaning || '--';
+    updateScoreBadge('atrScore', atr.score);
+    
+    // Update ATR values
+    document.getElementById('atrCurrent').textContent = atr.current_value || '--';
+    document.getElementById('atrAverage').textContent = atr.average_value || '--';
+    document.getElementById('atrTimeframe').textContent = atr.timeframe || '15m';
+    
+    // Format and display candle close time
+    if (atr.last_candle_close) {
+        const closeTime = new Date(atr.last_candle_close);
+        document.getElementById('atrCandleClose').textContent = closeTime.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    } else {
+        document.getElementById('atrCandleClose').textContent = '--';
+    }
+    
+    // Update analysis period
+    document.getElementById('atrAnalysisPeriod').textContent = atr.analysis_period || '960 candles (10 days)';
+    
+    // Display highest ATR value and time
+    document.getElementById('atrHighest').textContent = atr.highest_value || '--';
+    if (atr.highest_time) {
+        const highTime = new Date(atr.highest_time);
+        document.getElementById('atrHighestTime').textContent = `(${highTime.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        })})`;
+    } else {
+        document.getElementById('atrHighestTime').textContent = '';
+    }
+    
+    // Display lowest ATR value and time
+    document.getElementById('atrLowest').textContent = atr.lowest_value || '--';
+    if (atr.lowest_time) {
+        const lowTime = new Date(atr.lowest_time);
+        document.getElementById('atrLowestTime').textContent = `(${lowTime.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        })})`;
+    } else {
+        document.getElementById('atrLowestTime').textContent = '';
+    }
+    
+    // Update threshold percentage display
+    const thresholdPercentage = atr.high_volatility_threshold_used || '40%';
+    document.getElementById('atrThresholdPercentage').textContent = thresholdPercentage;
+    
+    // Display high volatility timestamp, ATR value, and excess points
+    if (atr.high_volatility_timestamp) {
+        const highVolTime = new Date(atr.high_volatility_timestamp);
+        document.getElementById('atrHighVolTime').textContent = highVolTime.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        document.getElementById('atrHighVolValue').textContent = atr.high_volatility_atr || '--';
+        document.getElementById('atrHighVolExcess').textContent = atr.high_volatility_excess_points || '--';
+    } else {
+        document.getElementById('atrHighVolTime').textContent = 'None found';
+        document.getElementById('atrHighVolValue').textContent = '--';
+        document.getElementById('atrHighVolExcess').textContent = '--';
+    }
+}
+
+function displayATRError(message) {
+    // Set all elements to error state
+    document.getElementById('atrState').textContent = '--';
+    document.getElementById('atrMeaning').textContent = message || 'Error loading data';
+    document.getElementById('atrCurrent').textContent = '--';
+    document.getElementById('atrAverage').textContent = '--';
+    document.getElementById('atrCandleClose').textContent = '--';
+    document.getElementById('atrHighest').textContent = '--';
+    document.getElementById('atrHighestTime').textContent = '';
+    document.getElementById('atrLowest').textContent = '--';
+    document.getElementById('atrLowestTime').textContent = '';
+    document.getElementById('atrHighVolTime').textContent = '--';
+    document.getElementById('atrHighVolValue').textContent = '--';
+    document.getElementById('atrHighVolExcess').textContent = '--';
+    document.getElementById('atrThresholdPercentage').textContent = '40%';  // Reset to default
+    updateScoreBadge('atrScore', 0);
+}
+
+// ====== ADX Functions ======
+
+// Load ADX analysis data for specific timeframe
+function loadADXAnalysis(timeframe = '15m') {
+    console.log('Loading ADX analysis for timeframe:', timeframe);
+    
+    fetch(`/api/adx_analysis?timeframe=${timeframe}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.adx) {
+                updateADXDisplay(data.adx);
+            } else {
+                displayADXError(data.message || 'Failed to load ADX data');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading ADX analysis:', error);
+            displayADXError('Failed to fetch ADX data');
+        });
+}
+
+function refreshADX() {
+    const selectedTimeframe = document.getElementById('adxTimeframeSelect').value;
+    console.log('Refreshing ADX with timeframe:', selectedTimeframe);
+    loadADXAnalysis(selectedTimeframe);
+}
+
+function onADXTimeframeChange() {
+    const selectedTimeframe = document.getElementById('adxTimeframeSelect').value;
+    console.log('ADX timeframe changed to:', selectedTimeframe);
+    loadADXAnalysis(selectedTimeframe);
+}
+
+function updateADXDisplay(adx) {
+    // Update current status
+    document.getElementById('adxState').textContent = adx.state || '--';
+    document.getElementById('adxMeaning').textContent = adx.meaning || '--';
+    updateScoreBadge('adxScore', adx.score);
+    
+    // Update ADX values
+    document.getElementById('adxCurrent').textContent = adx.current_value || '--';
+    document.getElementById('adxAverage').textContent = adx.average_value || '--';
+    document.getElementById('adxTimeframe').textContent = adx.timeframe || '15m';
+    
+    // Format and display candle close time
+    if (adx.last_candle_close) {
+        const closeTime = new Date(adx.last_candle_close);
+        document.getElementById('adxCandleClose').textContent = closeTime.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    } else {
+        document.getElementById('adxCandleClose').textContent = '--';
+    }
+    
+    // Update analysis period
+    document.getElementById('adxAnalysisPeriod').textContent = adx.analysis_period || '960 candles (10 days)';
+    
+    // Display highest ADX value and time
+    document.getElementById('adxHighest').textContent = adx.highest_value || '--';
+    if (adx.highest_time) {
+        const highTime = new Date(adx.highest_time);
+        document.getElementById('adxHighestTime').textContent = `(${highTime.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        })})`;
+    } else {
+        document.getElementById('adxHighestTime').textContent = '';
+    }
+    
+    // Display lowest ADX value and time
+    document.getElementById('adxLowest').textContent = adx.lowest_value || '--';
+    if (adx.lowest_time) {
+        const lowTime = new Date(adx.lowest_time);
+        document.getElementById('adxLowestTime').textContent = `(${lowTime.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        })})`;
+    } else {
+        document.getElementById('adxLowestTime').textContent = '';
+    }
+    
+    // Update threshold percentage display
+    const thresholdPercentage = adx.high_trend_threshold_used || '40%';
+    document.getElementById('adxThresholdPercentage').textContent = thresholdPercentage;
+    
+    // Display high trend strength timestamp, ADX value, and excess points
+    if (adx.high_trend_timestamp) {
+        const highTrendTime = new Date(adx.high_trend_timestamp);
+        document.getElementById('adxHighTrendTime').textContent = highTrendTime.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        document.getElementById('adxHighTrendValue').textContent = adx.high_trend_adx || '--';
+        document.getElementById('adxHighTrendExcess').textContent = adx.high_trend_excess_points || '--';
+    } else {
+        document.getElementById('adxHighTrendTime').textContent = 'None found';
+        document.getElementById('adxHighTrendValue').textContent = '--';
+        document.getElementById('adxHighTrendExcess').textContent = '--';
+    }
+}
+
+function displayADXError(message) {
+    // Set all elements to error state
+    document.getElementById('adxState').textContent = '--';
+    document.getElementById('adxMeaning').textContent = message || 'Error loading data';
+    document.getElementById('adxCurrent').textContent = '--';
+    document.getElementById('adxAverage').textContent = '--';
+    document.getElementById('adxCandleClose').textContent = '--';
+    document.getElementById('adxHighest').textContent = '--';
+    document.getElementById('adxHighestTime').textContent = '';
+    document.getElementById('adxLowest').textContent = '--';
+    document.getElementById('adxLowestTime').textContent = '';
+    document.getElementById('adxHighTrendTime').textContent = '--';
+    document.getElementById('adxHighTrendValue').textContent = '--';
+    document.getElementById('adxHighTrendExcess').textContent = '--';
+    document.getElementById('adxThresholdPercentage').textContent = '40%';  // Reset to default
+    updateScoreBadge('adxScore', 0);
+}
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', function() {

@@ -171,7 +171,7 @@ def get_cached_indicators(timeframe: str):
             
             elif timeframe == '1h':
                 # For 1H, we need to calculate higher timeframe analysis
-                config = load_config()
+                config = config_manager.get_all_config()
                 futures_config = config.get('futures_strategy', {})
                 trend_bullish_threshold = futures_config.get('trend_bullish_threshold', 3)
                 trend_bearish_threshold = futures_config.get('trend_bearish_threshold', -3)
@@ -211,13 +211,28 @@ def get_btc_data(timeframe='5m'):
             interval = '3m'
         elif timeframe == '5m':
             interval = '5m'
+        elif timeframe == '15m':
+            interval = '15m'
+        elif timeframe == '30m':
+            interval = '30m'
         elif timeframe == '1h':
             interval = '1h'
+        elif timeframe == '4h':
+            interval = '4h'
         else:
             interval = '5m'
         
-        # Get candle data - more for 1h timeframe
-        count = 200 if interval == '1h' else 100
+        # Get candle data - adjust count based on timeframe
+        if interval == '1h':
+            count = 250  # ~10 days of 1h data
+        elif interval == '4h':
+            count = 100  # ~16 days of 4h data 
+        elif interval == '30m':
+            count = 500  # ~10 days of 30m data
+        elif interval == '15m':
+            count = 1000  # For 10+ days of 15m data
+        else:
+            count = 100  # For 5m and other short timeframes
         candles = delta_client.get_historical_candles('BTCUSD', interval, count)
         
         if candles and len(candles) > 0:
@@ -710,7 +725,7 @@ def calculate_higher_timeframe_indicators(df, bullish_threshold=3, bearish_thres
             'overall_trend': overall_trend,
             'trend_strength': trend_strength,
             'total_score': total_score,
-            'max_score': 15,
+            'max_score': 12,
             'candle_time': df.iloc[-1]['timestamp'],
             'indicators': {
                 'fisher': {
@@ -806,7 +821,7 @@ def test_api_connection(api_key, api_secret, paper_trading=False):
 @app.route('/')
 def dashboard():
     """Main dashboard - NO FALLBACKS"""
-    config = load_config()
+    config = config_manager.get_all_config()
     
     # Test API connection if configured
     api_status = "Not Connected"
@@ -1305,7 +1320,7 @@ def api_signal_data():
             
             # Get thresholds from config
             try:
-                config = load_config()
+                config = config_manager.get_all_config()
                 futures_config = config.get('futures_strategy', {})
                 scoring['bullish_threshold'] = futures_config.get('long_signal_threshold', 5)
                 scoring['bearish_threshold'] = futures_config.get('short_signal_threshold', -7)
@@ -1514,14 +1529,19 @@ def api_signal_data():
 @app.route('/api/higher_timeframe_trend')
 def api_higher_timeframe_trend():
     """Get higher timeframe trend data with full indicator analysis"""
-    # Calculate the last 1h candle close time based on Delta Exchange timing
-    # Delta Exchange 1h candles close at :30 past each hour (5:30, 6:30, 7:30, etc.)
-    # This aligns with their contract start time of 5:30 PM IST
-    current_time = datetime.now()
-    last_hour_close = current_time.replace(minute=30, second=0, microsecond=0)
+    # Calculate the last 1h candle close time based on trading start time from config
+    config = config_manager.get_all_config()
+    trading_timing_config = config.get('trading_timing', {})
+    trading_start_time = trading_timing_config.get('trading_start_time', '17:30')  # Default to 17:30
+    start_hour, start_minute = map(int, trading_start_time.split(':'))
     
-    # If we haven't reached :30 past the hour yet, go back to previous hour's :30
-    if current_time.minute < 30:
+    # Delta Exchange 1h candles close at the same minute past each hour as trading start time
+    # e.g., if trading starts at 17:30, candles close at :30 past each hour
+    current_time = datetime.now()
+    last_hour_close = current_time.replace(minute=start_minute, second=0, microsecond=0)
+    
+    # If we haven't reached the candle close minute yet, go back to previous hour
+    if current_time.minute < start_minute:
         last_hour_close = last_hour_close - timedelta(hours=1)
     
     try:
@@ -1541,7 +1561,7 @@ def api_higher_timeframe_trend():
                 df_1h_raw = _indicator_cache['1h']['data'] if _indicator_cache['1h']['data'] is not None else get_btc_data(timeframe='1h')
                 
                 # Get threshold values from config
-                config = load_config()
+                config = config_manager.get_all_config()
                 futures_config = config.get('futures_strategy', {})
                 bullish_threshold = futures_config.get('trend_bullish_threshold', 3)
                 bearish_threshold = futures_config.get('trend_bearish_threshold', -3)
@@ -1620,6 +1640,24 @@ def api_higher_timeframe_trend():
                         atr_current = atr.iloc[-1]
                         atr_average = recent_atr.mean()
                         
+                        # Calculate highest and lowest ATR from last 240 candles (10 days)
+                        lookback_period = min(240, len(atr))  # Use available data if less than 240
+                        atr_240_period = atr.iloc[-lookback_period:]
+                        
+                        if len(atr_240_period) > 0:
+                            # Find highest ATR
+                            highest_atr_idx = atr_240_period.idxmax()
+                            highest_atr_value = atr_240_period.max()
+                            highest_atr_time = data.index[highest_atr_idx] if highest_atr_idx in data.index else None
+                            
+                            # Find lowest ATR
+                            lowest_atr_idx = atr_240_period.idxmin()
+                            lowest_atr_value = atr_240_period.min()
+                            lowest_atr_time = data.index[lowest_atr_idx] if lowest_atr_idx in data.index else None
+                        else:
+                            highest_atr_value = lowest_atr_value = 0
+                            highest_atr_time = lowest_atr_time = None
+                        
                         # Determine trend based on current vs average
                         if atr_current > atr_average * 1.2:
                             trend = 'High Volatility'
@@ -1637,24 +1675,24 @@ def api_higher_timeframe_trend():
                             trend = 'Normal Volatility'
                             is_bullish = None  # Neutral
                             
-                        return atr, atr_current, atr_average, trend, is_bullish
+                        return (atr, atr_current, atr_average, trend, is_bullish, 
+                                highest_atr_value, highest_atr_time, lowest_atr_value, lowest_atr_time)
                     else:
-                        return atr, 0, 0, 'Insufficient Data', None
+                        return (atr, 0, 0, 'Insufficient Data', None, 0, None, 0, None)
                 
                 # Calculate all indicators using raw data for display
                 fisher, fisher_signal = fisher_transform(df_1h_raw)
                 tsi = true_strength_index(df_1h_raw)
                 pivot, r1, s1 = calculate_pivot_points(df_1h_raw)
                 uptrend, downtrend = dow_theory_analysis(df_1h_raw)
-                atr_series, atr_current, atr_average, atr_trend, atr_bullish = calculate_atr_trend(df_1h_raw)
                 
                 # Get latest values and calculate scores
                 latest_candle = df_1h_raw.iloc[-1]
                 latest_idx = len(df_1h_raw) - 1
                 
                 # Scoring system
-                scores = {'fisher': 0, 'tsi': 0, 'pivot': 0, 'dow': 0, 'atr': 0}
-                meanings = {'fisher': 'Neutral', 'tsi': 'Neutral', 'pivot': 'At Pivot', 'dow': 'Sideways', 'atr': 'Normal Volatility'}
+                scores = {'fisher': 0, 'tsi': 0, 'pivot': 0, 'dow': 0}
+                meanings = {'fisher': 'Neutral', 'tsi': 'Neutral', 'pivot': 'At Pivot', 'dow': 'Sideways'}
                 
                 # Fisher Transform scoring
                 if not pd.isna(fisher.iloc[-1]) and not pd.isna(fisher_signal.iloc[-1]):
@@ -1736,22 +1774,6 @@ def api_higher_timeframe_trend():
                         scores['dow'] = -1
                         meanings['dow'] = 'Emerging Downtrend'
                 
-                # ATR scoring based on volatility trend
-                if atr_trend != 'Insufficient Data':
-                    scores['atr'] = 0
-                    meanings['atr'] = atr_trend
-                    
-                    if atr_bullish is True:  # High/Rising volatility
-                        if atr_trend == 'High Volatility':
-                            scores['atr'] = 3
-                        else:  # Rising Volatility
-                            scores['atr'] = 1
-                    elif atr_bullish is False:  # Low/Declining volatility
-                        if atr_trend == 'Low Volatility':
-                            scores['atr'] = -3
-                        else:  # Declining Volatility
-                            scores['atr'] = -1
-                    # else: Normal volatility gets 0 score
                 
                 # Calculate total score
                 total_score = sum(scores.values())
@@ -1772,7 +1794,7 @@ def api_higher_timeframe_trend():
                     'overall_trend': overall_trend,
                     'trend_strength': trend_strength,
                     'total_score': total_score,
-                    'max_score': 15,
+                    'max_score': 12,  # 4 indicators × 3 points each
                     'candle_close_time': last_hour_close.isoformat(),
                     'indicators': {
                         'fisher': {
@@ -1794,13 +1816,6 @@ def api_higher_timeframe_trend():
                             'signal': meanings['dow'],
                             'score': scores['dow'],
                             'meaning': meanings['dow']
-                        },
-                        'atr': {
-                            'state': meanings['atr'],
-                            'score': scores['atr'],
-                            'meaning': meanings['atr'],
-                            'current_value': round(atr_current, 4) if atr_current else 0,
-                            'average_value': round(atr_average, 4) if atr_average else 0
                         }
                     },
                     'timestamp': datetime.now().isoformat()
@@ -1814,35 +1829,247 @@ def api_higher_timeframe_trend():
                     'overall_trend': 'NEUTRAL',
                     'trend_strength': 'Unknown',
                     'total_score': 0,
-                    'max_score': 15,
+                    'max_score': 12,  # 4 indicators × 3 points each
                     'candle_close_time': last_hour_close.isoformat(),
                     'indicators': {
                         'fisher': {'value': None, 'score': 0, 'meaning': 'Data unavailable'},
                         'tsi': {'value': None, 'score': 0, 'meaning': 'Data unavailable'},
                         'pivot': {'position': '--', 'score': 0, 'meaning': 'Data unavailable'},
                         'dow': {'signal': '--', 'score': 0, 'meaning': 'Data unavailable'},
-                        'atr': {'state': '--', 'score': 0, 'meaning': 'Data unavailable'}
                     },
                     'timestamp': datetime.now().isoformat()
                 })
         else:
-            return jsonify({
-                'success': False,
-                'message': 'No 1h data available from Delta Exchange',
-                'overall_trend': 'NEUTRAL',
-                'trend_strength': 'Unknown',
-                'total_score': 0,
-                'max_score': 15,
-                'candle_close_time': last_hour_close.isoformat(),
-                'indicators': {
-                    'fisher': {'value': None, 'score': 0, 'meaning': 'No data'},
-                    'tsi': {'value': None, 'score': 0, 'meaning': 'No data'},
-                    'pivot': {'position': '--', 'score': 0, 'meaning': 'No data'},
-                    'dow': {'signal': '--', 'score': 0, 'meaning': 'No data'},
-                    'atr': {'state': '--', 'score': 0, 'meaning': 'No data'}
-                },
-                'timestamp': datetime.now().isoformat()
-            })
+            # Fallback: Calculate indicators directly when cache is not available
+            try:
+                df_1h_raw = get_btc_data(timeframe='1h')
+                
+                if df_1h_raw is not None and len(df_1h_raw) > 0:
+                    # Get threshold values from config
+                    config = config_manager.get_all_config()
+                    futures_config = config.get('futures_strategy', {})
+                    bullish_threshold = futures_config.get('trend_bullish_threshold', 3)
+                    bearish_threshold = futures_config.get('trend_bearish_threshold', -3)
+                    
+                    # Fisher Transform calculation
+                    def fisher_transform(data, period=10):
+                        high_low = (data['high'] + data['low']) / 2
+                        min_low = high_low.rolling(window=period).min()
+                        max_high = high_low.rolling(window=period).max()
+                        
+                        value1 = 2 * ((high_low - min_low) / (max_high - min_low) - 0.5)
+                        value1 = value1.fillna(0).clip(-0.999, 0.999)
+                        
+                        fish = 0.5 * np.log((1 + value1) / (1 - value1))
+                        fish_signal = fish.shift(1)
+                        
+                        return fish, fish_signal
+
+                    # TSI calculation  
+                    def true_strength_index(data, r=25, s=13):
+                        momentum = data['close'].diff(1)
+                        abs_momentum = momentum.abs()
+                        
+                        smoothed_momentum = momentum.ewm(span=r).mean().ewm(span=s).mean()
+                        smoothed_abs_momentum = abs_momentum.ewm(span=r).mean().ewm(span=s).mean()
+                        
+                        tsi = 100 * (smoothed_momentum / smoothed_abs_momentum)
+                        return tsi
+
+                    # Calculate pivot points
+                    def calculate_pivot_points(data):
+                        prev_high = data['high'].shift(1)
+                        prev_low = data['low'].shift(1)
+                        prev_close = data['close'].shift(1)
+                        
+                        pivot = (prev_high + prev_low + prev_close) / 3
+                        r1 = 2 * pivot - prev_low
+                        s1 = 2 * pivot - prev_high
+                        
+                        return pivot, r1, s1
+
+                    # Dow Theory analysis
+                    def dow_theory_analysis(data, short_period=20, long_period=50):
+                        sma_short = data['close'].rolling(window=short_period).mean()
+                        sma_long = data['close'].rolling(window=long_period).mean()
+                        
+                        highs = data['high'].rolling(window=5).max()
+                        lows = data['low'].rolling(window=5).min()
+                        
+                        higher_highs = highs > highs.shift(5)
+                        higher_lows = lows > lows.shift(5)
+                        lower_highs = highs < highs.shift(5)
+                        lower_lows = lows < lows.shift(5)
+                        
+                        uptrend = (sma_short > sma_long) & higher_highs & higher_lows
+                        downtrend = (sma_short < sma_long) & lower_highs & lower_lows
+                        
+                        return uptrend, downtrend
+
+                    # Calculate all indicators using raw data for display
+                    fisher, fisher_signal = fisher_transform(df_1h_raw)
+                    tsi = true_strength_index(df_1h_raw)
+                    pivot, r1, s1 = calculate_pivot_points(df_1h_raw)
+                    uptrend, downtrend = dow_theory_analysis(df_1h_raw)
+                    
+                    # Get latest values and calculate scores
+                    latest_candle = df_1h_raw.iloc[-1]
+                    latest_idx = len(df_1h_raw) - 1
+                    
+                    # Scoring system
+                    scores = {'fisher': 0, 'tsi': 0, 'pivot': 0, 'dow': 0}
+                    meanings = {'fisher': 'Neutral', 'tsi': 'Neutral', 'pivot': 'At Pivot', 'dow': 'Sideways'}
+                    
+                    # Fisher Transform scoring
+                    if not pd.isna(fisher.iloc[-1]) and not pd.isna(fisher_signal.iloc[-1]):
+                        fisher_val = fisher.iloc[-1]
+                        fisher_sig = fisher_signal.iloc[-1]
+                        if fisher_val > fisher_sig and fisher_val > 0:
+                            scores['fisher'] = 3
+                            meanings['fisher'] = 'Strong Bull'
+                        elif fisher_val > fisher_sig and fisher_val > -0.5:
+                            scores['fisher'] = 2
+                            meanings['fisher'] = 'Moderate Bull'
+                        elif fisher_val > fisher_sig:
+                            scores['fisher'] = 1
+                            meanings['fisher'] = 'Weak Bull'
+                        elif fisher_val < fisher_sig and fisher_val < 0:
+                            scores['fisher'] = -3
+                            meanings['fisher'] = 'Strong Bear'
+                        elif fisher_val < fisher_sig and fisher_val < 0.5:
+                            scores['fisher'] = -2
+                            meanings['fisher'] = 'Moderate Bear'
+                        elif fisher_val < fisher_sig:
+                            scores['fisher'] = -1
+                            meanings['fisher'] = 'Weak Bear'
+
+                    # TSI scoring
+                    if not pd.isna(tsi.iloc[-1]):
+                        tsi_val = tsi.iloc[-1]
+                        if tsi_val > 25:
+                            scores['tsi'] = 3
+                            meanings['tsi'] = 'Strong Bullish'
+                        elif tsi_val > 10:
+                            scores['tsi'] = 2
+                            meanings['tsi'] = 'Moderate Bullish'
+                        elif tsi_val > 0:
+                            scores['tsi'] = 1
+                            meanings['tsi'] = 'Weak Bullish'
+                        elif tsi_val < -25:
+                            scores['tsi'] = -3
+                            meanings['tsi'] = 'Strong Bearish'
+                        elif tsi_val < -10:
+                            scores['tsi'] = -2
+                            meanings['tsi'] = 'Moderate Bearish'
+                        elif tsi_val < 0:
+                            scores['tsi'] = -1
+                            meanings['tsi'] = 'Weak Bearish'
+
+                    # Pivot scoring
+                    if not pd.isna(pivot.iloc[-1]):
+                        close_price = latest_candle['close']
+                        pivot_price = pivot.iloc[-1]
+                        if close_price > pivot_price * 1.001:  # 0.1% above pivot
+                            scores['pivot'] = 2
+                            meanings['pivot'] = 'Above Pivot'
+                        elif close_price < pivot_price * 0.999:  # 0.1% below pivot
+                            scores['pivot'] = -2
+                            meanings['pivot'] = 'Below Pivot'
+
+                    # Dow Theory scoring
+                    if latest_idx < len(uptrend) and latest_idx < len(downtrend):
+                        if uptrend.iloc[-1]:
+                            scores['dow'] = 3
+                            meanings['dow'] = 'Clear Uptrend'
+                        elif uptrend.iloc[-5:].sum() >= 3:
+                            scores['dow'] = 1
+                            meanings['dow'] = 'Emerging Uptrend'
+                        elif downtrend.iloc[-1]:
+                            scores['dow'] = -3
+                            meanings['dow'] = 'Clear Downtrend'
+                        elif downtrend.iloc[-5:].sum() >= 3:
+                            scores['dow'] = -1
+                            meanings['dow'] = 'Emerging Downtrend'
+
+                    # Calculate total score
+                    total_score = sum(scores.values())
+                    
+                    # Determine overall trend
+                    if total_score >= bullish_threshold:
+                        overall_trend = 'Bullish'
+                        trend_strength = 'Strong'
+                    elif total_score <= bearish_threshold:
+                        overall_trend = 'Bearish'
+                        trend_strength = 'Strong'
+                    else:
+                        overall_trend = 'Neutral'
+                        trend_strength = 'Weak'
+                    
+                    return jsonify({
+                        'success': True,
+                        'overall_trend': overall_trend,
+                        'trend_strength': trend_strength,
+                        'total_score': total_score,
+                        'max_score': 12,  # 4 indicators × 3 points each
+                        'candle_close_time': last_hour_close.isoformat(),
+                        'indicators': {
+                            'fisher': {
+                                'value': fisher.iloc[-1] if not pd.isna(fisher.iloc[-1]) else None,
+                                'score': scores['fisher'],
+                                'meaning': meanings['fisher']
+                            },
+                            'tsi': {
+                                'value': tsi.iloc[-1] if not pd.isna(tsi.iloc[-1]) else None,
+                                'score': scores['tsi'],
+                                'meaning': meanings['tsi']
+                            },
+                            'pivot': {
+                                'position': 'Above Pivot' if latest_candle['close'] > pivot.iloc[-1] else 'Below Pivot',
+                                'score': scores['pivot'],
+                                'meaning': meanings['pivot']
+                            },
+                            'dow': {
+                                'signal': meanings['dow'],
+                                'score': scores['dow'],
+                                'meaning': meanings['dow']
+                            }
+                        },
+                        'timestamp': datetime.now().isoformat()
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'message': 'No 1h data available from Delta Exchange',
+                        'overall_trend': 'NEUTRAL',
+                        'trend_strength': 'Unknown',
+                        'total_score': 0,
+                        'max_score': 12,  # 4 indicators × 3 points each
+                        'candle_close_time': last_hour_close.isoformat(),
+                        'indicators': {
+                            'fisher': {'value': None, 'score': 0, 'meaning': 'No data'},
+                            'tsi': {'value': None, 'score': 0, 'meaning': 'No data'},
+                            'pivot': {'position': '--', 'score': 0, 'meaning': 'No data'},
+                            'dow': {'signal': '--', 'score': 0, 'meaning': 'No data'},
+                        },
+                        'timestamp': datetime.now().isoformat()
+                    })
+            except Exception as fallback_error:
+                return jsonify({
+                    'success': False,
+                    'message': f'Fallback analysis failed: {str(fallback_error)}',
+                    'overall_trend': 'NEUTRAL',
+                    'trend_strength': 'Unknown',
+                    'total_score': 0,
+                    'max_score': 12,  # 4 indicators × 3 points each
+                    'candle_close_time': last_hour_close.isoformat(),
+                    'indicators': {
+                        'fisher': {'value': None, 'score': 0, 'meaning': 'Analysis error'},
+                        'tsi': {'value': None, 'score': 0, 'meaning': 'Analysis error'},
+                        'pivot': {'position': '--', 'score': 0, 'meaning': 'Analysis error'},
+                        'dow': {'signal': '--', 'score': 0, 'meaning': 'Analysis error'},
+                    },
+                    'timestamp': datetime.now().isoformat()
+                })
     except Exception as e:
         return jsonify({
             'success': False,
@@ -1850,14 +2077,596 @@ def api_higher_timeframe_trend():
             'overall_trend': 'NEUTRAL',
             'trend_strength': 'Error',
             'total_score': 0,
-            'max_score': 15,
+            'max_score': 12,
             'candle_close_time': last_hour_close.isoformat(),
             'indicators': {
                 'fisher': {'value': None, 'score': 0, 'meaning': 'Connection error'},
                 'tsi': {'value': None, 'score': 0, 'meaning': 'Connection error'},
                 'pivot': {'position': '--', 'score': 0, 'meaning': 'Connection error'},
                 'dow': {'signal': '--', 'score': 0, 'meaning': 'Connection error'},
-                'atr': {'state': '--', 'score': 0, 'meaning': 'Connection error'}
+            },
+            'timestamp': datetime.now().isoformat()
+        })
+
+@app.route('/api/atr_analysis')
+def api_atr_analysis():
+    """Get ATR (Average True Range) analysis for multiple timeframes"""
+    from flask import request
+    
+    # Get timeframe from query parameter, default to 15m
+    timeframe = request.args.get('timeframe', '15m')
+    
+    # Validate timeframe
+    valid_timeframes = ['5m', '15m', '30m', '1h', '4h']
+    if timeframe not in valid_timeframes:
+        return jsonify({
+            'success': False,
+            'message': f'Invalid timeframe. Must be one of: {", ".join(valid_timeframes)}',
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    # Calculate the last candle close time based on timeframe and trading start time from config
+    config = config_manager.get_all_config()
+    trading_timing_config = config.get('trading_timing', {})
+    trading_start_time = trading_timing_config.get('trading_start_time', '17:30')  # Default to 17:30
+    start_hour, start_minute = map(int, trading_start_time.split(':'))
+    
+    current_time = datetime.now()
+    
+    # Calculate last candle close based on timeframe
+    if timeframe == '5m':
+        # 5-minute candles: :00, :05, :10, :15, :20, :25, :30, :35, :40, :45, :50, :55
+        current_minute = current_time.minute
+        last_minute = (current_minute // 5) * 5
+        last_candle_close = current_time.replace(minute=last_minute, second=0, microsecond=0)
+    elif timeframe == '15m':
+        # 15-minute candles: :00, :15, :30, :45
+        current_minute = current_time.minute
+        if current_minute >= 45:
+            last_candle_close = current_time.replace(minute=45, second=0, microsecond=0)
+        elif current_minute >= 30:
+            last_candle_close = current_time.replace(minute=30, second=0, microsecond=0)
+        elif current_minute >= 15:
+            last_candle_close = current_time.replace(minute=15, second=0, microsecond=0)
+        else:
+            last_candle_close = current_time.replace(minute=0, second=0, microsecond=0)
+    elif timeframe == '30m':
+        # 30-minute candles: :00, :30
+        current_minute = current_time.minute
+        if current_minute >= 30:
+            last_candle_close = current_time.replace(minute=30, second=0, microsecond=0)
+        else:
+            last_candle_close = current_time.replace(minute=0, second=0, microsecond=0)
+    elif timeframe == '1h':
+        # 1-hour candles close at trading start minute (e.g., :30 if trading starts at 17:30)
+        last_candle_close = current_time.replace(minute=start_minute, second=0, microsecond=0)
+        if current_time.minute < start_minute:
+            last_candle_close = last_candle_close - timedelta(hours=1)
+    elif timeframe == '4h':
+        # 4-hour candles: typically at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
+        # Adjust based on trading start time
+        current_hour = current_time.hour
+        last_hour = (current_hour // 4) * 4
+        last_candle_close = current_time.replace(hour=last_hour, minute=0, second=0, microsecond=0)
+    
+    try:
+        # Calculate analysis period based on timeframe (target: ~10 days of data)
+        if timeframe == '5m':
+            default_lookback = 2880  # 2880 = 24*12*10 (10 days)
+        elif timeframe == '15m':
+            default_lookback = 960   # 960 = 24*4*10 (10 days)
+        elif timeframe == '30m':
+            default_lookback = 480   # 480 = 24*2*10 (10 days)
+        elif timeframe == '1h':
+            default_lookback = 240   # 240 = 24*10 (10 days)
+        elif timeframe == '4h':
+            default_lookback = 60    # 60 = 6*10 (10 days)
+        else:
+            default_lookback = 960   # Default to 15m equivalent
+            
+        # Get data for ATR analysis based on selected timeframe
+        df_data = get_btc_data(timeframe=timeframe)
+        
+        if df_data is not None and len(df_data) > 0:
+            # Calculate actual lookback period based on available data
+            lookback_period = min(default_lookback, len(df_data))
+            
+            # ATR (Average True Range) calculation for selected timeframe
+            def calculate_atr(data, period=14):
+                # Calculate True Range
+                high_low = data['high'] - data['low']
+                high_close = abs(data['high'] - data['close'].shift(1))
+                low_close = abs(data['low'] - data['close'].shift(1))
+                
+                true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+                atr = true_range.rolling(window=period).mean()
+                
+                # Calculate ATR trend over last 30 periods (7.5 hours)
+                if len(atr) >= 30:
+                    recent_atr = atr.iloc[-30:]  # Last 30 candles
+                    atr_current = atr.iloc[-1]
+                    atr_average = recent_atr.mean()
+                    
+                    # Use the lookback period for analysis
+                    atr_period = atr.iloc[-lookback_period:]
+                    
+                    if len(atr_period) > 0:
+                        # Find highest ATR
+                        highest_atr_idx = atr_period.idxmax()
+                        highest_atr_value = atr_period.max()
+                        if 'timestamp' in data.columns and highest_atr_idx < len(data):
+                            highest_atr_time = data.iloc[highest_atr_idx]['timestamp']
+                        else:
+                            highest_atr_time = None
+                        
+                        # Find lowest ATR
+                        lowest_atr_idx = atr_period.idxmin()
+                        lowest_atr_value = atr_period.min()
+                        if 'timestamp' in data.columns and lowest_atr_idx < len(data):
+                            lowest_atr_time = data.iloc[lowest_atr_idx]['timestamp']
+                        else:
+                            lowest_atr_time = None
+                        
+                        # Find last time ATR was above threshold with fallback for 1h/4h timeframes
+                        # For 1h and 4h, use fallback thresholds: 40% -> 30% -> 20%
+                        # For other timeframes, stick with 40%
+                        thresholds_to_try = []
+                        if timeframe in ['1h', '4h']:
+                            thresholds_to_try = [
+                                (1.4, '40%'),  # 40% above average
+                                (1.3, '30%'),  # 30% above average  
+                                (1.2, '20%')   # 20% above average
+                            ]
+                        else:
+                            thresholds_to_try = [(1.4, '40%')]  # Only 40% for other timeframes
+                        
+                        high_vol_time = None
+                        high_vol_value = None
+                        high_vol_excess = None
+                        high_vol_threshold_used = None
+                        
+                        # Try each threshold until we find a match
+                        for threshold_multiplier, threshold_label in thresholds_to_try:
+                            high_volatility_threshold = atr_average * threshold_multiplier
+                            
+                            # Search backwards through ATR data
+                            for i in range(len(atr) - 1, max(0, len(atr) - lookback_period - 1), -1):
+                                if not pd.isna(atr.iloc[i]) and atr.iloc[i] > high_volatility_threshold:
+                                    high_vol_value = atr.iloc[i]
+                                    high_vol_excess = high_vol_value - atr_average
+                                    high_vol_threshold_used = threshold_label
+                                    if 'timestamp' in data.columns and i < len(data):
+                                        high_vol_time = data.iloc[i]['timestamp']
+                                    break
+                            
+                            # If we found a match, stop trying other thresholds
+                            if high_vol_time is not None:
+                                break
+                    else:
+                        highest_atr_value = lowest_atr_value = 0
+                        highest_atr_time = lowest_atr_time = None
+                        high_vol_time = high_vol_value = high_vol_excess = None
+                    
+                    # Determine trend based on current vs average
+                    if atr_current > atr_average * 1.2:
+                        trend = 'High Volatility'
+                        is_bullish = True  # High volatility often precedes moves
+                    elif atr_current > atr_average * 1.1:
+                        trend = 'Rising Volatility'
+                        is_bullish = True
+                    elif atr_current < atr_average * 0.8:
+                        trend = 'Low Volatility'
+                        is_bullish = False  # Low volatility suggests consolidation
+                    elif atr_current < atr_average * 0.9:
+                        trend = 'Declining Volatility'
+                        is_bullish = False
+                    else:
+                        trend = 'Normal Volatility'
+                        is_bullish = None  # Neutral
+                        
+                    return (atr, atr_current, atr_average, trend, is_bullish, 
+                            highest_atr_value, highest_atr_time, lowest_atr_value, lowest_atr_time,
+                            high_vol_time, high_vol_value, high_vol_excess, high_vol_threshold_used)
+                else:
+                    return (atr, 0, 0, 'Insufficient Data', None, 0, None, 0, None, None, None, None, None)
+            
+            # Calculate ATR analysis - pass the values directly
+            (atr_series, atr_current, atr_average, atr_trend, atr_bullish,
+             atr_highest_value, atr_highest_time, atr_lowest_value, atr_lowest_time,
+             high_vol_timestamp, high_vol_atr, high_vol_points, high_vol_threshold_used) = calculate_atr(df_data)
+            
+            # Calculate score
+            atr_score = 0
+            if atr_trend != 'Insufficient Data':
+                if atr_bullish is True:  # High/Rising volatility
+                    if atr_trend == 'High Volatility':
+                        atr_score = 3
+                    else:  # Rising Volatility
+                        atr_score = 1
+                elif atr_bullish is False:  # Low/Declining volatility
+                    if atr_trend == 'Low Volatility':
+                        atr_score = -3
+                    else:  # Declining Volatility
+                        atr_score = -1
+            
+            return jsonify({
+                'success': True,
+                'atr': {
+                    'state': atr_trend,
+                    'score': atr_score,
+                    'meaning': atr_trend,
+                    'current_value': round(atr_current, 4) if atr_current else 0,
+                    'average_value': round(atr_average, 4) if atr_average else 0,
+                    'last_candle_close': last_candle_close.strftime('%Y-%m-%d %H:%M:%S'),
+                    'highest_value': round(atr_highest_value, 4) if atr_highest_value else 0,
+                    'highest_time': atr_highest_time.strftime('%Y-%m-%d %H:%M:%S') if atr_highest_time else None,
+                    'lowest_value': round(atr_lowest_value, 4) if atr_lowest_value else 0,
+                    'lowest_time': atr_lowest_time.strftime('%Y-%m-%d %H:%M:%S') if atr_lowest_time else None,
+                    'high_volatility_timestamp': high_vol_timestamp.strftime('%Y-%m-%d %H:%M:%S') if high_vol_timestamp else None,
+                    'high_volatility_atr': round(high_vol_atr, 4) if high_vol_atr else None,
+                    'high_volatility_excess_points': round(high_vol_points, 4) if high_vol_points else None,
+                    'high_volatility_threshold_used': high_vol_threshold_used,
+                    'timeframe': timeframe,
+                    'analysis_period': f'{lookback_period} candles (10 days)'
+                },
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'atr': {
+                    'state': '--',
+                    'score': 0,
+                    'meaning': f'No {timeframe} data available',
+                    'current_value': 0,
+                    'average_value': 0,
+                    'last_candle_close': None,
+                    'highest_value': 0,
+                    'highest_time': None,
+                    'lowest_value': 0,
+                    'lowest_time': None,
+                    'high_volatility_timestamp': None,
+                    'high_volatility_atr': None,
+                    'high_volatility_excess_points': None,
+                    'high_volatility_threshold_used': None,
+                    'timeframe': timeframe,
+                    'analysis_period': f'{default_lookback} candles (10 days)'
+                },
+                'timestamp': datetime.now().isoformat()
+            })
+    except Exception as e:
+        # Calculate default lookback for error case
+        if timeframe == '5m':
+            error_lookback = 2880
+        elif timeframe == '15m':
+            error_lookback = 960
+        elif timeframe == '30m':
+            error_lookback = 480
+        elif timeframe == '1h':
+            error_lookback = 240
+        elif timeframe == '4h':
+            error_lookback = 60
+        else:
+            error_lookback = 960
+            
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'atr': {
+                'state': '--',
+                'score': 0,
+                'meaning': 'Analysis error',
+                'current_value': 0,
+                'average_value': 0,
+                'last_candle_close': None,
+                'highest_value': 0,
+                'highest_time': None,
+                'lowest_value': 0,
+                'lowest_time': None,
+                'high_volatility_timestamp': None,
+                'high_volatility_atr': None,
+                'high_volatility_excess_points': None,
+                'high_volatility_threshold_used': None,
+                'timeframe': timeframe,
+                'analysis_period': f'{error_lookback} candles (10 days)'
+            },
+            'timestamp': datetime.now().isoformat()
+        })
+
+@app.route('/api/adx_analysis')
+def api_adx_analysis():
+    """Get ADX (Average Directional Index) analysis for multiple timeframes"""
+    from flask import request
+    
+    # Get timeframe from query parameter, default to 15m
+    timeframe = request.args.get('timeframe', '15m')
+    
+    # Validate timeframe
+    valid_timeframes = ['5m', '15m', '30m', '1h', '4h']
+    if timeframe not in valid_timeframes:
+        return jsonify({
+            'success': False,
+            'message': f'Invalid timeframe. Must be one of: {", ".join(valid_timeframes)}',
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    # Calculate the last candle close time based on timeframe and trading start time from config
+    config = config_manager.get_all_config()
+    trading_timing_config = config.get('trading_timing', {})
+    trading_start_time = trading_timing_config.get('trading_start_time', '17:30')  # Default to 17:30
+    start_hour, start_minute = map(int, trading_start_time.split(':'))
+    
+    current_time = datetime.now()
+    
+    # Calculate last candle close based on timeframe (same logic as ATR)
+    if timeframe == '5m':
+        # 5-minute candles: :00, :05, :10, :15, :20, :25, :30, :35, :40, :45, :50, :55
+        current_minute = current_time.minute
+        last_minute = (current_minute // 5) * 5
+        last_candle_close = current_time.replace(minute=last_minute, second=0, microsecond=0)
+    elif timeframe == '15m':
+        # 15-minute candles: :00, :15, :30, :45
+        current_minute = current_time.minute
+        if current_minute >= 45:
+            last_candle_close = current_time.replace(minute=45, second=0, microsecond=0)
+        elif current_minute >= 30:
+            last_candle_close = current_time.replace(minute=30, second=0, microsecond=0)
+        elif current_minute >= 15:
+            last_candle_close = current_time.replace(minute=15, second=0, microsecond=0)
+        else:
+            last_candle_close = current_time.replace(minute=0, second=0, microsecond=0)
+    elif timeframe == '30m':
+        # 30-minute candles: :00, :30
+        current_minute = current_time.minute
+        if current_minute >= 30:
+            last_candle_close = current_time.replace(minute=30, second=0, microsecond=0)
+        else:
+            last_candle_close = current_time.replace(minute=0, second=0, microsecond=0)
+    elif timeframe == '1h':
+        # 1-hour candles close at trading start minute (e.g., :30 if trading starts at 17:30)
+        last_candle_close = current_time.replace(minute=start_minute, second=0, microsecond=0)
+        if current_time.minute < start_minute:
+            last_candle_close = last_candle_close - timedelta(hours=1)
+    elif timeframe == '4h':
+        # 4-hour candles: typically at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
+        # Adjust based on trading start time
+        current_hour = current_time.hour
+        last_hour = (current_hour // 4) * 4
+        last_candle_close = current_time.replace(hour=last_hour, minute=0, second=0, microsecond=0)
+    
+    try:
+        # Calculate analysis period based on timeframe (target: ~10 days of data)
+        if timeframe == '5m':
+            default_lookback = 2880  # 2880 = 24*12*10 (10 days)
+        elif timeframe == '15m':
+            default_lookback = 960   # 960 = 24*4*10 (10 days)
+        elif timeframe == '30m':
+            default_lookback = 480   # 480 = 24*2*10 (10 days)
+        elif timeframe == '1h':
+            default_lookback = 240   # 240 = 24*10 (10 days)
+        elif timeframe == '4h':
+            default_lookback = 60    # 60 = 6*10 (10 days)
+        else:
+            default_lookback = 960   # Default to 15m equivalent
+            
+        # Get data for ADX analysis based on selected timeframe
+        df_data = get_btc_data(timeframe=timeframe)
+        
+        if df_data is not None and len(df_data) > 0:
+            # Calculate actual lookback period based on available data
+            lookback_period = min(default_lookback, len(df_data))
+            
+            # ADX (Average Directional Index) calculation for selected timeframe
+            def calculate_adx(data, period=14):
+                # Calculate True Range
+                high_low = data['high'] - data['low']
+                high_close = abs(data['high'] - data['close'].shift(1))
+                low_close = abs(data['low'] - data['close'].shift(1))
+                
+                true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+                
+                # Calculate Directional Movement
+                plus_dm = data['high'].diff()
+                minus_dm = data['low'].diff() * -1
+                
+                # Set directional movements to zero where they don't meet criteria
+                plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
+                minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
+                
+                # Calculate smoothed averages
+                atr = true_range.rolling(window=period).mean()
+                plus_di = (plus_dm.rolling(window=period).mean() / atr) * 100
+                minus_di = (minus_dm.rolling(window=period).mean() / atr) * 100
+                
+                # Calculate DX and ADX
+                dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+                adx = dx.rolling(window=period).mean()
+                
+                # Calculate ADX trend over last 30 periods
+                if len(adx) >= 30:
+                    recent_adx = adx.iloc[-30:]  # Last 30 candles
+                    adx_current = adx.iloc[-1]
+                    adx_average = recent_adx.mean()
+                    
+                    # Use the lookback period for analysis
+                    adx_period = adx.iloc[-lookback_period:]
+                    
+                    if len(adx_period) > 0:
+                        # Find highest ADX
+                        highest_adx_idx = adx_period.idxmax()
+                        highest_adx_value = adx_period.max()
+                        if 'timestamp' in data.columns and highest_adx_idx < len(data):
+                            highest_adx_time = data.iloc[highest_adx_idx]['timestamp']
+                        else:
+                            highest_adx_time = None
+                        
+                        # Find lowest ADX
+                        lowest_adx_idx = adx_period.idxmin()
+                        lowest_adx_value = adx_period.min()
+                        if 'timestamp' in data.columns and lowest_adx_idx < len(data):
+                            lowest_adx_time = data.iloc[lowest_adx_idx]['timestamp']
+                        else:
+                            lowest_adx_time = None
+                        
+                        # Find last time ADX was above threshold with fallback for 1h/4h timeframes
+                        # For 1h and 4h, use fallback thresholds: 40% -> 30% -> 20%
+                        # For other timeframes, stick with 40%
+                        thresholds_to_try = []
+                        if timeframe in ['1h', '4h']:
+                            thresholds_to_try = [
+                                (1.4, '40%'),  # 40% above average
+                                (1.3, '30%'),  # 30% above average  
+                                (1.2, '20%')   # 20% above average
+                            ]
+                        else:
+                            thresholds_to_try = [(1.4, '40%')]  # Only 40% for other timeframes
+                        
+                        high_trend_time = None
+                        high_trend_value = None
+                        high_trend_excess = None
+                        high_trend_threshold_used = None
+                        
+                        # Try each threshold until we find a match
+                        for threshold_multiplier, threshold_label in thresholds_to_try:
+                            high_trend_threshold = adx_average * threshold_multiplier
+                            
+                            # Search backwards through ADX data
+                            for i in range(len(adx) - 1, max(0, len(adx) - lookback_period - 1), -1):
+                                if not pd.isna(adx.iloc[i]) and adx.iloc[i] > high_trend_threshold:
+                                    high_trend_value = adx.iloc[i]
+                                    high_trend_excess = high_trend_value - adx_average
+                                    high_trend_threshold_used = threshold_label
+                                    if 'timestamp' in data.columns and i < len(data):
+                                        high_trend_time = data.iloc[i]['timestamp']
+                                    break
+                            
+                            # If we found a match, stop trying other thresholds
+                            if high_trend_time is not None:
+                                break
+                    else:
+                        highest_adx_value = lowest_adx_value = 0
+                        highest_adx_time = lowest_adx_time = None
+                        high_trend_time = high_trend_value = high_trend_excess = None
+                    
+                    # Determine trend based on ADX values
+                    if adx_current >= 25:
+                        trend = 'Strong Trend'
+                        is_bullish = True  # Strong trend is bullish for trend-following
+                    elif adx_current >= 20:
+                        trend = 'Moderate Trend'
+                        is_bullish = True
+                    elif adx_current >= 15:
+                        trend = 'Weak Trend'
+                        is_bullish = False
+                    else:
+                        trend = 'Ranging/No Trend'
+                        is_bullish = False  # Low ADX suggests ranging market
+                        
+                    return (adx, adx_current, adx_average, trend, is_bullish, 
+                            highest_adx_value, highest_adx_time, lowest_adx_value, lowest_adx_time,
+                            high_trend_time, high_trend_value, high_trend_excess, high_trend_threshold_used)
+                else:
+                    return (adx, 0, 0, 'Insufficient Data', None, 0, None, 0, None, None, None, None, None)
+            
+            # Calculate ADX analysis - pass the values directly
+            (adx_series, adx_current, adx_average, adx_trend, adx_bullish,
+             adx_highest_value, adx_highest_time, adx_lowest_value, adx_lowest_time,
+             high_trend_timestamp, high_trend_adx, high_trend_points, high_trend_threshold_used) = calculate_adx(df_data)
+            
+            # Calculate score
+            adx_score = 0
+            if adx_trend != 'Insufficient Data':
+                if adx_bullish is True:  # Strong/Moderate trend
+                    if adx_trend == 'Strong Trend':
+                        adx_score = 3
+                    else:  # Moderate Trend
+                        adx_score = 1
+                elif adx_bullish is False:  # Weak/No trend
+                    if adx_trend == 'Ranging/No Trend':
+                        adx_score = -3
+                    else:  # Weak Trend
+                        adx_score = -1
+            
+            return jsonify({
+                'success': True,
+                'adx': {
+                    'state': adx_trend,
+                    'score': adx_score,
+                    'meaning': adx_trend,
+                    'current_value': round(adx_current, 4) if adx_current else 0,
+                    'average_value': round(adx_average, 4) if adx_average else 0,
+                    'last_candle_close': last_candle_close.strftime('%Y-%m-%d %H:%M:%S'),
+                    'highest_value': round(adx_highest_value, 4) if adx_highest_value else 0,
+                    'highest_time': adx_highest_time.strftime('%Y-%m-%d %H:%M:%S') if adx_highest_time else None,
+                    'lowest_value': round(adx_lowest_value, 4) if adx_lowest_value else 0,
+                    'lowest_time': adx_lowest_time.strftime('%Y-%m-%d %H:%M:%S') if adx_lowest_time else None,
+                    'high_trend_timestamp': high_trend_timestamp.strftime('%Y-%m-%d %H:%M:%S') if high_trend_timestamp else None,
+                    'high_trend_adx': round(high_trend_adx, 4) if high_trend_adx else None,
+                    'high_trend_excess_points': round(high_trend_points, 4) if high_trend_points else None,
+                    'high_trend_threshold_used': high_trend_threshold_used,
+                    'timeframe': timeframe,
+                    'analysis_period': f'{lookback_period} candles (10 days)'
+                },
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'adx': {
+                    'state': '--',
+                    'score': 0,
+                    'meaning': f'No {timeframe} data available',
+                    'current_value': 0,
+                    'average_value': 0,
+                    'last_candle_close': None,
+                    'highest_value': 0,
+                    'highest_time': None,
+                    'lowest_value': 0,
+                    'lowest_time': None,
+                    'high_trend_timestamp': None,
+                    'high_trend_adx': None,
+                    'high_trend_excess_points': None,
+                    'high_trend_threshold_used': None,
+                    'timeframe': timeframe,
+                    'analysis_period': f'{default_lookback} candles (10 days)'
+                },
+                'timestamp': datetime.now().isoformat()
+            })
+    except Exception as e:
+        # Calculate default lookback for error case
+        if timeframe == '5m':
+            error_lookback = 2880
+        elif timeframe == '15m':
+            error_lookback = 960
+        elif timeframe == '30m':
+            error_lookback = 480
+        elif timeframe == '1h':
+            error_lookback = 240
+        elif timeframe == '4h':
+            error_lookback = 60
+        else:
+            error_lookback = 960
+            
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'adx': {
+                'state': '--',
+                'score': 0,
+                'meaning': 'Analysis error',
+                'current_value': 0,
+                'average_value': 0,
+                'last_candle_close': None,
+                'highest_value': 0,
+                'highest_time': None,
+                'lowest_value': 0,
+                'lowest_time': None,
+                'high_trend_timestamp': None,
+                'high_trend_adx': None,
+                'high_trend_excess_points': None,
+                'high_trend_threshold_used': None,
+                'timeframe': timeframe,
+                'analysis_period': f'{error_lookback} candles (10 days)'
             },
             'timestamp': datetime.now().isoformat()
         })
