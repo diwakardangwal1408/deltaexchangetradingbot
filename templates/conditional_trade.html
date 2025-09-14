@@ -1,0 +1,566 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12">
+            <h2><i class="bi bi-alarm"></i> Conditional Trade</h2>
+            <p class="text-muted">Set up conditional orders that execute automatically when price conditions are met</p>
+        </div>
+    </div>
+
+    <!-- Current Price Status -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card btc-price-card">
+                <div class="card-body text-center">
+                    <h5>Current BTC Price</h5>
+                    <div class="large-value" id="currentBTCPrice">Loading...</div>
+                    <div class="value-label" id="lastPriceUpdate">Last updated: --</div>
+                    <div class="mt-2">
+                        <span class="badge bg-light text-dark me-2" id="priceMonitorStatus">Monitor: Stopped</span>
+                        <button class="btn btn-sm btn-outline-light" id="refreshPriceBtn">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Create Conditional Trade Form -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5><i class="bi bi-plus-circle"></i> Create Conditional Trade</h5>
+                </div>
+                <div class="card-body">
+                    <form id="conditionalTradeForm">
+                        <div class="row mb-3">
+                            <div class="col-4">
+                                <label for="priceCondition" class="form-label">When BTC</label>
+                                <select class="form-select" id="priceCondition" required>
+                                    <option value="">Select...</option>
+                                    <option value=">">Goes Above (&gt;)</option>
+                                    <option value="<">Goes Below (&lt;)</option>
+                                </select>
+                            </div>
+                            <div class="col-8">
+                                <label for="targetPrice" class="form-label">Target Price ($)</label>
+                                <input type="number" class="form-control" id="targetPrice" step="0.01" required placeholder="e.g., 45000.00">
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <label for="numberOfLots" class="form-label">Number of Lots</label>
+                                <input type="number" class="form-control" id="numberOfLots" min="1" value="1" required>
+                            </div>
+                            <div class="col-6">
+                                <label for="orderSide" class="form-label">Order Side</label>
+                                <select class="form-select" id="orderSide" required>
+                                    <option value="">Select...</option>
+                                    <option value="buy">Buy (Long)</option>
+                                    <option value="sell">Sell (Short)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="orderType" class="form-label">Order Type</label>
+                            <select class="form-select" id="orderType" required>
+                                <option value="market">Market Order (Execute at current price)</option>
+                                <option value="limit">Limit Order (Execute at specific price)</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3" id="limitPriceGroup" style="display: none;">
+                            <label for="limitPrice" class="form-label">Limit Price ($)</label>
+                            <input type="number" class="form-control" id="limitPrice" step="0.01" placeholder="Price for order execution">
+                            <small class="form-text text-muted">Order will only execute at this price or better</small>
+                        </div>
+
+                        <!-- Trade Preview Section -->
+                        <div class="card bg-dark border-secondary mb-3" id="tradePreviewCard" style="display: none;">
+                            <div class="card-header">
+                                <h6><i class="bi bi-eye"></i> Trade Preview</h6>
+                            </div>
+                            <div class="card-body" id="tradePreviewContent">
+                                <!-- Preview content will be populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary" id="createConditionalBtn">
+                                <i class="bi bi-alarm-fill"></i> Create Conditional Trade
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Conditional Trades -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5><i class="bi bi-clock"></i> Active Conditional Trades</h5>
+                    <button class="btn btn-sm btn-outline-light" id="refreshActiveTradesBtn">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="activeConditionalTrades">
+                        <div class="text-center text-muted py-4" id="noActiveTradesMessage">
+                            <i class="bi bi-clock-history fs-1"></i>
+                            <p>No active conditional trades</p>
+                            <small>Create your first conditional trade using the form</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Price Monitor Statistics -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6><i class="bi bi-graph-up"></i> Price Monitor Stats</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="small text-muted">Price Refreshes</div>
+                            <div class="medium-value" id="statsUpdates">0</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="small text-muted">Trades Triggered</div>
+                            <div class="medium-value text-orange" id="statsTriggered">0</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="small text-muted">Successfully Executed</div>
+                            <div class="medium-value text-green" id="statsExecuted">0</div>
+                        </div>
+                    </div>
+                    <div class="mt-2 small text-muted text-center" id="monitorUptime">
+                        Uptime: --
+                    </div>
+                </div>
+            </div>
+
+            <!-- Executed Conditional Trades -->
+            <div class="card mt-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6><i class="bi bi-check-circle"></i> Executed Conditional Trades</h6>
+                    <button class="btn btn-sm btn-outline-light" id="refreshExecutedTradesBtn">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                    <div id="executedConditionalTrades">
+                        <div class="text-center text-muted py-4" id="noExecutedTradesMessage">
+                            <i class="bi bi-check-circle fs-1"></i>
+                            <p>No executed trades yet</p>
+                            <small>Executed conditional trades will appear here</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script>
+$(document).ready(function() {
+    let currentBTCPrice = 0;
+    let priceMonitorRunning = false;
+    
+    // Auto-refresh intervals
+    let priceRefreshInterval;
+    let tradesRefreshInterval;
+    let statsRefreshInterval;
+    let executedTradesRefreshInterval;
+    let lastStatsTriggered = 0;
+
+    // Initialize page
+    function initializePage() {
+        updateCurrentPrice();
+        loadActiveConditionalTrades();
+        loadExecutedConditionalTrades();
+        loadPriceMonitorStats();
+        
+        // Start auto-refresh intervals
+        priceRefreshInterval = setInterval(updateCurrentPrice, 10000); // Every 10 seconds
+        tradesRefreshInterval = setInterval(loadActiveConditionalTrades, 15000); // Every 15 seconds  
+        executedTradesRefreshInterval = setInterval(loadExecutedConditionalTrades, 20000); // Every 20 seconds
+        statsRefreshInterval = setInterval(loadPriceMonitorStats, 30000); // Every 30 seconds
+    }
+
+    // Update current BTC price - using same endpoint as dashboard
+    function updateCurrentPrice() {
+        fetch('/api/btc_price')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.price) {
+                    currentBTCPrice = data.price;
+                    $('#currentBTCPrice').text(`$${currentBTCPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`);
+                    $('#lastPriceUpdate').text(`Last updated: ${new Date(data.timestamp).toLocaleString()}`);
+                    
+                    // Update trade preview if form is filled
+                    updateTradePreview();
+                } else {
+                    $('#currentBTCPrice').text('Error loading price');
+                    $('#lastPriceUpdate').text('Failed to update price');
+                    console.error('BTC price API error:', data.message || 'Unknown error');
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching current price:', error);
+                $('#currentBTCPrice').text('Connection error');
+                $('#lastPriceUpdate').text('Network error');
+            });
+    }
+
+    // Show/hide limit price field based on order type
+    $('#orderType').change(function() {
+        if ($(this).val() === 'limit') {
+            $('#limitPriceGroup').show();
+            $('#limitPrice').prop('required', true);
+        } else {
+            $('#limitPriceGroup').hide();
+            $('#limitPrice').prop('required', false);
+        }
+        updateTradePreview();
+    });
+
+    // Update preview when form fields change
+    $('#priceCondition, #targetPrice, #numberOfLots, #orderSide, #orderType, #limitPrice').on('input change', function() {
+        updateTradePreview();
+    });
+
+    // Update trade preview
+    function updateTradePreview() {
+        const condition = $('#priceCondition').val();
+        const targetPrice = parseFloat($('#targetPrice').val());
+        const lots = parseInt($('#numberOfLots').val());
+        const side = $('#orderSide').val();
+        const orderType = $('#orderType').val();
+        const limitPrice = parseFloat($('#limitPrice').val());
+
+        if (condition && targetPrice && lots && side && currentBTCPrice > 0) {
+            // Calculate condition status
+            const conditionMet = (condition === '>' && currentBTCPrice >= targetPrice) || 
+                                (condition === '<' && currentBTCPrice <= targetPrice);
+            
+            const priceDiff = Math.abs(targetPrice - currentBTCPrice);
+            const statusText = conditionMet ? 
+                '<span class="text-success"><i class="bi bi-check-circle"></i> TRIGGERED - Will execute immediately</span>' :
+                `<span class="text-warning"><i class="bi bi-clock"></i> WAITING - Need $${priceDiff.toLocaleString('en-US', {minimumFractionDigits: 2})} ${condition === '>' ? 'increase' : 'decrease'}</span>`;
+
+            // Calculate execution details
+            const executionPrice = orderType === 'limit' ? limitPrice : currentBTCPrice;
+            const totalValue = executionPrice * lots;
+
+            const previewHTML = `
+                <div class="row">
+                    <div class="col-12">
+                        <strong>Condition:</strong> BTC ${condition} $${targetPrice.toLocaleString('en-US', {minimumFractionDigits: 2})}
+                        <br><strong>Status:</strong> ${statusText}
+                    </div>
+                </div>
+                <hr>
+                <div class="row">
+                    <div class="col-6">
+                        <strong>Execution:</strong><br>
+                        ${side.toUpperCase()} ${lots} lot${lots > 1 ? 's' : ''}
+                        <br>
+                        ${orderType === 'market' ? 'at Market Price' : `at Limit $${limitPrice.toLocaleString('en-US', {minimumFractionDigits: 2})}`}
+                    </div>
+                    <div class="col-6">
+                        <strong>Estimated Total:</strong><br>
+                        <span class="${side === 'buy' ? 'text-success' : 'text-danger'}">
+                            ${side === 'buy' ? '-' : '+'}$${totalValue.toLocaleString('en-US', {minimumFractionDigits: 2})}
+                        </span>
+                        <br>
+                        <small class="text-muted">@ $${executionPrice.toLocaleString('en-US', {minimumFractionDigits: 2})} per lot</small>
+                    </div>
+                </div>
+            `;
+
+            $('#tradePreviewContent').html(previewHTML);
+            $('#tradePreviewCard').show();
+        } else {
+            $('#tradePreviewCard').hide();
+        }
+    }
+
+    // Create conditional trade
+    $('#conditionalTradeForm').submit(function(e) {
+        e.preventDefault();
+        
+        if (currentBTCPrice <= 0) {
+            alert('Unable to create trade - current price not available');
+            return;
+        }
+
+        const conditionalData = {
+            condition_type: $('#priceCondition').val(),
+            target_price: parseFloat($('#targetPrice').val()),
+            number_of_lots: parseInt($('#numberOfLots').val()),
+            order_side: $('#orderSide').val(),
+            order_type: $('#orderType').val(),
+            limit_price: $('#orderType').val() === 'limit' ? parseFloat($('#limitPrice').val()) : null
+        };
+
+        $('#createConditionalBtn').prop('disabled', true).html('<i class="bi bi-hourglass-split"></i> Creating...');
+
+        fetch('/api/conditional_trades/create', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(conditionalData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('✅ Conditional trade created successfully!');
+                $('#conditionalTradeForm')[0].reset();
+                $('#tradePreviewCard').hide();
+                loadActiveConditionalTrades();
+                loadExecutedConditionalTrades(); // Refresh executed trades as well
+            } else {
+                alert('❌ Error creating conditional trade: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('❌ Network error creating conditional trade');
+        })
+        .finally(() => {
+            $('#createConditionalBtn').prop('disabled', false).html('<i class="bi bi-alarm-fill"></i> Create Conditional Trade');
+        });
+    });
+
+    // Load active conditional trades
+    function loadActiveConditionalTrades() {
+        fetch('/api/conditional_trades/active')
+            .then(response => response.json())
+            .then(data => {
+                const container = $('#activeConditionalTrades');
+                if (data.success && data.trades && data.trades.length > 0) {
+                    let html = '';
+                    let hasActiveTrades = false;
+                    
+                    data.trades.forEach(trade => {
+                        // Skip if trade is not in ACTIVE status (should have been removed from backend)
+                        if (trade.status !== 'active') {
+                            console.log(`Skipping trade ${trade.trade_id} with status: ${trade.status}`);
+                            return;
+                        }
+                        
+                        hasActiveTrades = true;
+                        const createdAt = new Date(trade.created_at).toLocaleString();
+                        const conditionText = `BTC ${trade.condition_type} $${parseFloat(trade.target_price).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                        
+                        // Determine if condition is met
+                        const conditionMet = (trade.condition_type === '>' && currentBTCPrice >= trade.target_price) || 
+                                           (trade.condition_type === '<' && currentBTCPrice <= trade.target_price);
+                        
+                        let statusBadge, statusClass;
+                        if (conditionMet) {
+                            statusBadge = '<span class="badge bg-warning"><i class="bi bi-lightning"></i> TRIGGERED - Executing...</span>';
+                            statusClass = 'border-warning';
+                        } else {
+                            statusBadge = '<span class="badge bg-info"><i class="bi bi-clock"></i> WAITING</span>';
+                            statusClass = 'border-secondary';
+                        }
+
+                        html += `
+                            <div class="border rounded p-3 mb-2 ${statusClass}" id="trade-${trade.trade_id}">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <div class="d-flex align-items-center mb-1">
+                                            <strong>${conditionText}</strong>
+                                            <span class="ms-2">${statusBadge}</span>
+                                        </div>
+                                        <div class="text-muted small mb-2">
+                                            ${trade.order_side.toUpperCase()} ${trade.number_of_lots} lot${trade.number_of_lots > 1 ? 's' : ''} 
+                                            (${trade.order_type.toUpperCase()})
+                                            ${trade.limit_price ? ' @ $' + parseFloat(trade.limit_price).toLocaleString('en-US', {minimumFractionDigits: 2}) : ''}
+                                        </div>
+                                        <div class="text-muted small">
+                                            Created: ${createdAt}
+                                        </div>
+                                    </div>
+                                    <div class="ms-2">
+                                        <button class="btn btn-sm btn-outline-danger" onclick="cancelConditionalTrade('${trade.trade_id}')">
+                                            <i class="bi bi-x-circle"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    if (hasActiveTrades) {
+                        container.html(html);
+                    } else {
+                        container.html($('#noActiveTradesMessage').prop('outerHTML'));
+                    }
+                } else {
+                    container.html($('#noActiveTradesMessage').prop('outerHTML'));
+                }
+            })
+            .catch(error => {
+                console.error('Error loading active conditional trades:', error);
+                $('#activeConditionalTrades').html('<div class="text-center text-danger py-4">Error loading trades</div>');
+            });
+    }
+
+    // Load executed conditional trades
+    function loadExecutedConditionalTrades() {
+        fetch('/api/conditional_trades/executed')
+            .then(response => response.json())
+            .then(data => {
+                const container = $('#executedConditionalTrades');
+                if (data.success && data.executed_trades && data.executed_trades.length > 0) {
+                    let html = '';
+                    
+                    data.executed_trades.forEach(trade => {
+                        const executedAt = new Date(trade.executed_at).toLocaleString();
+                        const createdAt = new Date(trade.created_at).toLocaleString();
+                        const conditionText = `BTC ${trade.condition_type} $${parseFloat(trade.target_price).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                        
+                        html += `
+                            <div class="border border-success rounded p-3 mb-2 bg-light">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div class="flex-grow-1">
+                                        <div class="d-flex align-items-center mb-1">
+                                            <strong class="text-success">${conditionText}</strong>
+                                            <span class="ms-2"><span class="badge bg-success"><i class="bi bi-check-circle"></i> EXECUTED</span></span>
+                                        </div>
+                                        <div class="text-dark small mb-2">
+                                            <strong>${trade.order_side.toUpperCase()} ${trade.number_of_lots} lot${trade.number_of_lots > 1 ? 's' : ''}</strong>
+                                            (${trade.order_type.toUpperCase()}) 
+                                            @ <strong>$${parseFloat(trade.executed_price).toLocaleString('en-US', {minimumFractionDigits: 2})}</strong>
+                                        </div>
+                                        <div class="row small text-muted">
+                                            <div class="col-6">
+                                                <div><strong>Order ID:</strong> ${trade.order_id}</div>
+                                                <div><strong>Executed:</strong> ${executedAt}</div>
+                                            </div>
+                                            <div class="col-6">
+                                                <div><strong>Trigger Price:</strong> $${parseFloat(trade.trigger_price).toLocaleString('en-US', {minimumFractionDigits: 2})}</div>
+                                                <div><strong>Created:</strong> ${createdAt}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    container.html(html);
+                } else {
+                    container.html($('#noExecutedTradesMessage').prop('outerHTML'));
+                }
+            })
+            .catch(error => {
+                console.error('Error loading executed conditional trades:', error);
+                $('#executedConditionalTrades').html('<div class="text-center text-danger py-4">Error loading executed trades</div>');
+            });
+    }
+
+    // Cancel conditional trade
+    window.cancelConditionalTrade = function(tradeId) {
+        if (confirm('⚠️ Are you sure you want to cancel this conditional trade?')) {
+            fetch(`/api/conditional_trades/cancel/${tradeId}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ Conditional trade cancelled successfully');
+                    loadActiveConditionalTrades();
+                    loadExecutedConditionalTrades(); // Refresh executed trades as well
+                } else {
+                    alert('❌ Error cancelling conditional trade: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('❌ Network error cancelling conditional trade');
+            });
+        }
+    };
+
+    // Load price monitor statistics
+    function loadPriceMonitorStats() {
+        fetch('/api/conditional_trades/monitor_stats')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const stats = data.stats;
+                    $('#statsUpdates').text(stats.total_price_updates || 0);
+                    $('#statsTriggered').text(stats.total_trades_triggered || 0);
+                    $('#statsExecuted').text(stats.successful_executions || 0);
+                    
+                    // Check if a new trade was triggered
+                    const currentTriggered = stats.total_trades_triggered || 0;
+                    if (currentTriggered > lastStatsTriggered) {
+                        console.log('New trade triggered detected - refreshing active trades');
+                        loadActiveConditionalTrades(); // Immediate refresh when trade is triggered
+                        lastStatsTriggered = currentTriggered;
+                    }
+                    
+                    if (stats.uptime_formatted) {
+                        $('#monitorUptime').text(`Uptime: ${stats.uptime_formatted}`);
+                    }
+                    
+                    // Update monitor status
+                    const isRunning = stats.uptime_start !== null;
+                    $('#priceMonitorStatus').text(`Monitor: ${isRunning ? 'Running' : 'Stopped'}`)
+                                           .removeClass('bg-success bg-danger')
+                                           .addClass(isRunning ? 'bg-success' : 'bg-danger');
+                    priceMonitorRunning = isRunning;
+                }
+            })
+            .catch(error => {
+                console.error('Error loading monitor stats:', error);
+            });
+    }
+
+    // Manual refresh buttons
+    $('#refreshPriceBtn').click(function() {
+        $(this).prop('disabled', true);
+        updateCurrentPrice();
+        setTimeout(() => $(this).prop('disabled', false), 2000);
+    });
+
+    $('#refreshActiveTradesBtn').click(function() {
+        $(this).prop('disabled', true);
+        loadActiveConditionalTrades();
+        setTimeout(() => $(this).prop('disabled', false), 2000);
+    });
+
+    $('#refreshExecutedTradesBtn').click(function() {
+        $(this).prop('disabled', true);
+        loadExecutedConditionalTrades();
+        setTimeout(() => $(this).prop('disabled', false), 2000);
+    });
+
+    // Initialize the page
+    initializePage();
+
+    // Cleanup on page unload
+    $(window).on('beforeunload', function() {
+        if (priceRefreshInterval) clearInterval(priceRefreshInterval);
+        if (tradesRefreshInterval) clearInterval(tradesRefreshInterval);
+        if (statsRefreshInterval) clearInterval(statsRefreshInterval);
+    });
+});
+</script>
+{% endblock %}

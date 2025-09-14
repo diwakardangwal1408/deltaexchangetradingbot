@@ -5,7 +5,14 @@
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h2><i class="bi bi-activity"></i> Delta Exchange Trade History</h2>
-            <div>
+            <div class="d-flex align-items-center gap-3">
+                <div class="d-flex align-items-center gap-2">
+                    <label for="dateFilter" class="form-label mb-0 fw-bold">Filter by Date:</label>
+                    <input type="date" id="dateFilter" class="form-control form-control-sm" style="width: 140px;">
+                    <button id="clearDateFilter" class="btn btn-outline-secondary btn-sm" title="Show All Trades">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
                 <button id="refreshTrades" class="btn btn-outline-primary">
                     <i class="bi bi-arrow-clockwise"></i> Refresh
                 </button>
@@ -16,8 +23,9 @@
 </div>
 
 <!-- Summary Cards -->
+<!-- First Row - Trading Stats -->
 <div class="row mb-3">
-    <div class="col-md-2">
+    <div class="col-md-3">
         <div class="card text-center">
             <div class="card-body">
                 <h4 class="text-primary" id="totalFills">0</h4>
@@ -25,7 +33,7 @@
             </div>
         </div>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
         <div class="card text-center">
             <div class="card-body">
                 <h4 class="text-success" id="buyOrders">0</h4>
@@ -33,7 +41,7 @@
             </div>
         </div>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
         <div class="card text-center">
             <div class="card-body">
                 <h4 class="text-danger" id="sellOrders">0</h4>
@@ -41,27 +49,68 @@
             </div>
         </div>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
+        <!-- Removed Today's Volume field -->
+    </div>
+</div>
+
+<!-- Second Row - Financial Stats -->
+<div class="row mb-3">
+    <div class="col-md-3">
+        <!-- Removed Total Volume field -->
+    </div>
+    <div class="col-md-3">
         <div class="card text-center">
             <div class="card-body">
-                <h4 class="text-warning" id="todayVolume">₹0</h4>
-                <small class="text-muted">Today's Volume</small>
+                <h4 id="totalMarginUsed" class="text-success">₹0</h4>
+                <small class="text-muted">Total Margin Used</small>
             </div>
         </div>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
         <div class="card text-center">
             <div class="card-body">
-                <h4 id="totalNotional" class="text-info">₹0</h4>
-                <small class="text-muted">Total Volume</small>
+                <h4 id="realizedPnL" class="profit-neutral">₹0.00</h4>
+                <small class="text-muted">Realized P&L</small>
             </div>
         </div>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 id="unrealizedPnL" class="profit-neutral">₹0.00</h4>
+                <small class="text-muted">Unrealized P&L</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Third Row - Additional Stats -->
+<div class="row mb-3">
+    <div class="col-md-3">
         <div class="card text-center">
             <div class="card-body">
                 <h4 id="totalCommission" class="text-secondary">₹0.00</h4>
                 <small class="text-muted">Commission Paid</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 id="leverageUsed" class="text-primary">0x</h4>
+                <small class="text-muted">Leverage Used</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <!-- Removed Margin Efficiency field -->
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h4 id="avgTradeSize" class="text-dark">₹0</h4>
+                <small class="text-muted">Avg Trade Size</small>
             </div>
         </div>
     </div>
@@ -158,13 +207,20 @@ function updateTrades() {
     document.getElementById('updateIndicator').textContent = 'Updating...';
     document.getElementById('updateIndicator').className = 'badge bg-warning ms-2';
     
-    fetch('/api/trades')
+    // Get selected date from date picker
+    const selectedDate = document.getElementById('dateFilter').value;
+    let url = '/api/trades';
+    if (selectedDate) {
+        url += `?date=${selectedDate}`;
+    }
+    
+    fetch(url)
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 renderTrades(data.trades);
-                updateSummaryStats(data.trades);
-                document.getElementById('updateIndicator').textContent = 'Live';
+                updateSummaryStats(data);  // Pass full API response
+                document.getElementById('updateIndicator').textContent = selectedDate ? `Filtered: ${selectedDate}` : 'Live';
                 document.getElementById('updateIndicator').className = 'badge bg-success ms-2';
             } else {
                 showError(data.error || 'Failed to load trade fills');
@@ -211,51 +267,47 @@ function renderTrades(trades) {
             <div class="trade-card mb-3">
                 <div class="card fill-row">
                     <div class="card-body">
-                        <div class="row align-items-center">
-                            <div class="col-md-2">
+                        <!-- First Row -->
+                        <div class="row align-items-center mb-2">
+                            <div class="col-md-4">
                                 <div class="d-flex flex-column">
-                                    <div class="d-flex align-items-center gap-2">
+                                    <div class="d-flex align-items-center gap-2 mb-1">
                                         <strong class="${sideClass}">${fill.side}</strong>
                                         <span class="badge ${roleClass}">${fill.role}</span>
+                                        <strong>${fill.symbol}</strong>
                                     </div>
-                                    <small class="text-muted">${fill.trade_id}</small>
-                                    <small class="text-muted">${orderType}</small>
+                                    <small class="text-muted">${fillTime}</small>
                                 </div>
                             </div>
-                            <div class="col-md-2">
+                            <div class="col-md-4">
                                 <div class="d-flex flex-column">
-                                    <strong>${fill.symbol}</strong>
-                                    <small class="text-muted">Fill ID: ${fill.trade_id.split('_')[1]?.substr(0,8) || 'N/A'}</small>
+                                    <div class="d-flex justify-content-between">
+                                        <span><strong>Size:</strong> ${size} BTC</span>
+                                        <span><strong>Price:</strong> ₹${price_inr}</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between mt-1">
+                                        <span><strong>Leverage:</strong> ${fill.leverage}x</span>
+                                        <span><strong>Fee:</strong> ₹${fee_inr}</span>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="col-md-2">
+                            <div class="col-md-4">
                                 <div class="d-flex flex-column">
-                                    <strong>Time:</strong>
-                                    <small>${fillTime.split(',')[0]}</small>
-                                    <small class="text-muted">${fillTime.split(',')[1]}</small>
+                                    <div class="d-flex justify-content-between">
+                                        <span><strong>Notional:</strong> <span class="text-info">₹${value_inr}</span></span>
+                                    </div>
+                                    <div class="d-flex justify-content-between mt-1">
+                                        <span><strong>Margin Used:</strong> <span class="text-success">₹${parseFloat(fill.margin_used_inr || 0).toFixed(0)}</span></span>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="col-md-2">
-                                <div class="d-flex flex-column">
-                                    <strong>Size:</strong>
-                                    <span>${size} BTC</span>
-                                    <strong class="mt-1">Price:</strong>
-                                    <span class="text-primary">₹${price_inr}</span>
-                                </div>
-                            </div>
-                            <div class="col-md-2">
-                                <div class="d-flex flex-column">
-                                    <strong>Value:</strong>
-                                    <span class="text-info">₹${value_inr}</span>
-                                    <strong class="mt-1">Fee:</strong>
-                                    <span class="text-warning">₹${fee_inr}</span>
-                                </div>
-                            </div>
-                            <div class="col-md-2">
-                                <div class="d-flex flex-column">
-                                    <strong>Order ID:</strong>
-                                    <code class="small">${fill.order_id || 'N/A'}</code>
-                                    <small class="text-muted">Delta Exchange</small>
+                        </div>
+                        <!-- Second Row -->
+                        <div class="row">
+                            <div class="col-12">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">Order ID: ${fill.order_id || 'N/A'}</small>
+                                    <small class="text-muted">Trade ID: ${fill.trade_id}</small>
                                 </div>
                             </div>
                         </div>
@@ -268,35 +320,75 @@ function renderTrades(trades) {
     container.innerHTML = html;
 }
 
-function updateSummaryStats(trades) {
-    if (!trades) return;
+function updateSummaryStats(apiData) {
+    if (!apiData || !apiData.trades) return;
     
+    const trades = apiData.trades;
     const today = new Date().toISOString().split('T')[0];
     
     // Filter trades by side
     const buyOrders = trades.filter(t => t.side === 'BUY');
     const sellOrders = trades.filter(t => t.side === 'SELL');
     
-    // Filter today's trades
-    const todayTrades = trades.filter(t => {
-        const tradeDate = new Date(t.timestamp).toISOString().split('T')[0];
-        return tradeDate === today;
-    });
+    // Filter today's trades (or all trades if date is filtered)
+    let todayTrades;
+    if (apiData.selected_date) {
+        // If date is filtered, show volume for that date
+        todayTrades = trades; 
+    } else {
+        // Show today's volume
+        todayTrades = trades.filter(t => {
+            const tradeDate = new Date(t.timestamp).toISOString().split('T')[0];
+            return tradeDate === today;
+        });
+    }
     
     // Calculate totals in INR
     const totalNotional = trades.reduce((sum, t) => sum + (parseFloat(t.value_inr) || 0), 0);
+    const totalMarginUsed = trades.reduce((sum, t) => sum + (parseFloat(t.margin_used_inr) || 0), 0);
     const totalCommission = trades.reduce((sum, t) => sum + (parseFloat(t.fee_inr) || 0), 0);
     const todayVolume = todayTrades.reduce((sum, t) => sum + (parseFloat(t.value_inr) || 0), 0);
+    
+    // Get profit data from API response
+    const realizedPnL = parseFloat(apiData.total_realized_pnl_inr || 0);
+    const unrealizedPnL = parseFloat(apiData.total_unrealized_pnl_inr || 0);
+    const leverageUsed = parseFloat(apiData.leverage_used || 100);
+    
+    // Debug: Log profit values from API
+    console.log('DEBUG PROFIT Frontend:', {
+        raw_realized_pnl: apiData.total_realized_pnl_inr,
+        raw_unrealized_pnl: apiData.total_unrealized_pnl_inr,
+        parsed_realized_pnl: realizedPnL,
+        parsed_unrealized_pnl: unrealizedPnL,
+        leverage_used: leverageUsed
+    });
+    
+    // Calculate additional metrics (divide by leverage)
+    const actualMarginUsed = leverageUsed > 0 ? (totalMarginUsed / leverageUsed) : totalMarginUsed;
+    const actualAvgTradeSize = trades.length > 0 ? (actualMarginUsed / trades.length) : 0;
     
     // Update UI elements
     document.getElementById('totalFills').textContent = trades.length;
     document.getElementById('buyOrders').textContent = buyOrders.length;
     document.getElementById('sellOrders').textContent = sellOrders.length;
     
-    // Format and display monetary values in INR
-    document.getElementById('todayVolume').textContent = `₹${todayVolume.toFixed(0)}`;
-    document.getElementById('totalNotional').textContent = `₹${totalNotional.toFixed(0)}`;
+    // Format and display monetary values in INR (removed volume fields)
+    document.getElementById('totalMarginUsed').textContent = `₹${actualMarginUsed.toFixed(0)}`;
     document.getElementById('totalCommission').textContent = `₹${totalCommission.toFixed(2)}`;
+    
+    // Update additional metrics
+    document.getElementById('leverageUsed').textContent = `${leverageUsed}x`;
+    document.getElementById('avgTradeSize').textContent = `₹${actualAvgTradeSize.toFixed(0)}`;
+    
+    // Update realized P&L with appropriate colors
+    const realizedPnLElement = document.getElementById('realizedPnL');
+    realizedPnLElement.textContent = `₹${realizedPnL.toFixed(2)}`;
+    realizedPnLElement.className = realizedPnL > 0 ? 'profit-positive' : realizedPnL < 0 ? 'profit-negative' : 'profit-neutral';
+    
+    // Update unrealized P&L with appropriate colors
+    const unrealizedPnLElement = document.getElementById('unrealizedPnL');
+    unrealizedPnLElement.textContent = `₹${unrealizedPnL.toFixed(2)}`;
+    unrealizedPnLElement.className = unrealizedPnL > 0 ? 'profit-positive' : unrealizedPnL < 0 ? 'profit-negative' : 'profit-neutral';
 }
 
 function showError(message) {
@@ -319,6 +411,27 @@ document.addEventListener('DOMContentLoaded', function() {
     // Manual refresh button
     document.getElementById('refreshTrades').addEventListener('click', function() {
         updateTrades();
+    });
+    
+    // Date filter change event
+    document.getElementById('dateFilter').addEventListener('change', function() {
+        updateTrades();
+        // Stop auto-refresh when filtering by date
+        if (this.value) {
+            clearInterval(tradesUpdateInterval);
+        } else {
+            // Restart auto-refresh when showing all trades
+            tradesUpdateInterval = setInterval(updateTrades, 30000);
+        }
+    });
+    
+    // Clear date filter button
+    document.getElementById('clearDateFilter').addEventListener('click', function() {
+        document.getElementById('dateFilter').value = '';
+        updateTrades();
+        // Restart auto-refresh
+        clearInterval(tradesUpdateInterval);
+        tradesUpdateInterval = setInterval(updateTrades, 30000);
     });
 });
 

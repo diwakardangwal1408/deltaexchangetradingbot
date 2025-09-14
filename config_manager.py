@@ -35,6 +35,7 @@ portfolio_size = 100000.0
 position_size_usd = 500.0
 max_daily_loss = 2000.0
 max_positions = 2
+leverage = 100
 
 
 [STRATEGY_PARAMETERS]
@@ -75,6 +76,7 @@ min_time_between_neutral_trades = 7200"""
             'position_size_usd': self.config.getfloat('PORTFOLIO_SETTINGS', 'position_size_usd', fallback=500.0),
             'max_daily_loss': self.config.getfloat('PORTFOLIO_SETTINGS', 'max_daily_loss', fallback=2000.0),
             'max_positions': self.config.getint('PORTFOLIO_SETTINGS', 'max_positions', fallback=2),
+            'leverage': self.config.getint('PORTFOLIO_SETTINGS', 'leverage', fallback=100),
             
             
             
@@ -168,6 +170,7 @@ min_time_between_neutral_trades = 7200"""
             self.config.set('PORTFOLIO_SETTINGS', 'position_size_usd', str(config_data.get('position_size_usd', 500.0)))
             self.config.set('PORTFOLIO_SETTINGS', 'max_daily_loss', str(config_data.get('max_daily_loss', 2000.0)))
             self.config.set('PORTFOLIO_SETTINGS', 'max_positions', str(config_data.get('max_positions', 2)))
+            self.config.set('PORTFOLIO_SETTINGS', 'leverage', str(config_data.get('leverage', 100)))
             
             
             

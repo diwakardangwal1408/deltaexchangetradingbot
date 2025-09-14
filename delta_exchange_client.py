@@ -707,6 +707,159 @@ class DeltaExchangeClient:
             self.logger.error(f"Portfolio summary calculation failed: {e}")
             raise Exception(f"Portfolio summary unavailable: {e}")
     
+    def get_realized_profits(self):
+        """
+        Get total realized profits from all positions
+        WARNING: This only shows realized P&L from CURRENTLY OPEN positions.
+        When positions are closed, their realized P&L is lost from this API.
+        This is a Delta Exchange API limitation.
+        """
+        try:
+            if self.paper_trading:
+                return {
+                    'total_realized_pnl': 0.0,
+                    'total_realized_funding': 0.0,
+                    'positions_with_profit': [],
+                    'api_limitation_note': 'Paper trading mode - no real profits'
+                }
+            
+            positions = self.get_positions()
+            
+            total_realized_pnl = 0.0
+            total_realized_funding = 0.0
+            positions_with_profit = []
+            
+            self.logger.info(f"DEBUG: Found {len(positions)} open positions for P&L calculation")
+            
+            for pos in positions:
+                realized_pnl = float(pos.get('realized_pnl', 0))
+                realized_funding = float(pos.get('realized_funding', 0))
+                
+                self.logger.info(f"DEBUG: Position {pos.get('product_symbol', 'Unknown')}: realized_pnl={realized_pnl}, size={pos.get('size', 0)}")
+                
+                total_realized_pnl += realized_pnl
+                total_realized_funding += realized_funding
+                
+                # Store position details if there's any realized profit/loss
+                if realized_pnl != 0 or realized_funding != 0:
+                    positions_with_profit.append({
+                        'symbol': pos.get('product_symbol', 'Unknown'),
+                        'realized_pnl': realized_pnl,
+                        'realized_funding': realized_funding,
+                        'size': pos.get('size', 0)
+                    })
+            
+            self.logger.info(f"DEBUG: Total realized P&L from open positions: {total_realized_pnl} USD")
+            
+            return {
+                'total_realized_pnl': total_realized_pnl,
+                'total_realized_funding': total_realized_funding,
+                'positions_with_profit': positions_with_profit,
+                'api_limitation_note': 'Only shows P&L from currently open positions'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching realized profits: {e}")
+            return {
+                'total_realized_pnl': 0.0,
+                'total_realized_funding': 0.0,
+                'positions_with_profit': [],
+                'api_limitation_note': f'API Error: {str(e)}'
+            }
+    
+    def get_total_realized_pnl_from_fills(self, days_back=30):
+        """
+        Get total realized P&L from trade history using fills API
+        This provides comprehensive P&L data including closed positions
+        
+        Args:
+            days_back: Number of days to look back for trades (default 30)
+        """
+        try:
+            if self.paper_trading:
+                return {
+                    'total_realized_pnl': 0.0,
+                    'total_fills': 0,
+                    'profitable_trades': 0,
+                    'losing_trades': 0,
+                    'win_rate': 0.0,
+                    'api_limitation_note': 'Paper trading mode - no real profits'
+                }
+            
+            # Calculate time range (microseconds)
+            import time
+            from datetime import datetime, timedelta
+            
+            end_time = int(time.time() * 1000000)  # Current time in microseconds
+            start_time = int((datetime.now() - timedelta(days=days_back)).timestamp() * 1000000)
+            
+            self.logger.info(f"Fetching realized P&L from fills for last {days_back} days")
+            
+            # Fetch fills without time filters (use recent fills)
+            # Note: Using smaller page size and no time filters to avoid 401 Unauthorized
+            fills_response = self.get_fills_history(page_size=500)
+            
+            if not fills_response.get('success', False):
+                raise Exception("Failed to fetch fills history")
+            
+            fills = fills_response.get('result', [])
+            
+            total_realized_pnl = 0.0
+            profitable_trades = 0
+            losing_trades = 0
+            total_commission = 0.0
+            
+            self.logger.info(f"Processing {len(fills)} fills for P&L calculation")
+            
+            # Debug: Log first few fills to understand structure
+            for i, fill in enumerate(fills[:3]):
+                self.logger.info(f"DEBUG Fill {i+1}: {fill}")
+            
+            for fill in fills:
+                # Extract realized P&L from each fill
+                fill_pnl = float(fill.get('realized_pnl', 0))
+                commission = float(fill.get('commission', 0))
+                
+                total_realized_pnl += fill_pnl
+                total_commission += commission
+                
+                # Count profitable vs losing trades
+                if fill_pnl > 0:
+                    profitable_trades += 1
+                elif fill_pnl < 0:
+                    losing_trades += 1
+                
+                # Log individual fill for debugging
+                self.logger.info(f"Fill: {fill.get('product_symbol', 'Unknown')} - P&L: {fill_pnl}, Commission: {commission}, Side: {fill.get('side', 'Unknown')}")
+            
+            # Calculate win rate
+            total_trades_with_pnl = profitable_trades + losing_trades
+            win_rate = (profitable_trades / total_trades_with_pnl * 100) if total_trades_with_pnl > 0 else 0.0
+            
+            self.logger.info(f"Total realized P&L from {len(fills)} fills: {total_realized_pnl} USD")
+            self.logger.info(f"Win rate: {win_rate:.1f}% ({profitable_trades}/{total_trades_with_pnl})")
+            
+            return {
+                'total_realized_pnl': total_realized_pnl,
+                'total_fills': len(fills),
+                'profitable_trades': profitable_trades,
+                'losing_trades': losing_trades,
+                'win_rate': win_rate,
+                'total_commission': total_commission,
+                'days_analyzed': days_back
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching realized P&L from fills: {e}")
+            return {
+                'total_realized_pnl': 0.0,
+                'total_fills': 0,
+                'profitable_trades': 0,
+                'losing_trades': 0,
+                'win_rate': 0.0,
+                'api_limitation_note': f'API Error: {str(e)}'
+            }
+    
     def place_order(self, symbol, side, quantity, order_type='market', price=None):
         """Place order using Delta REST client"""
         try:
@@ -752,19 +905,23 @@ class DeltaExchangeClient:
                 api_secret=self.api_secret
             )
             
-            # Use Delta REST client's place_order method
-            if order_type.lower() == 'market':
+            # Use Delta REST client's place_order method - import the required enums
+            from delta_rest_client import OrderType as DeltaOrderType
+            
+            if order_type.lower() in ['market', 'market_order']:
                 response = delta_rest_client.place_order(
                     product_id=product_info['id'],
                     size=quantity,
-                    side=side.lower()
+                    side=side.lower(),
+                    order_type=DeltaOrderType.MARKET  # Use enum from delta-rest-client
                 )
             else:  # limit order
                 response = delta_rest_client.place_order(
                     product_id=product_info['id'],
                     size=quantity,
                     side=side.lower(),
-                    limit_price=price
+                    order_type=DeltaOrderType.LIMIT,  # Use enum from delta-rest-client
+                    limit_price=str(price)  # Price as string per API docs
                 )
             
             self.logger.info(f"Successfully placed order: {response.get('id', 'unknown')}")
@@ -772,6 +929,8 @@ class DeltaExchangeClient:
             
         except Exception as e:
             self.logger.error(f"Order placement failed: {e}")
+            import traceback
+            self.logger.error(f"Full stack trace: {traceback.format_exc()}")
             raise Exception(f"Order placement failed: {e}")
     
     def _get_simulated_price(self, symbol, side):
@@ -1033,16 +1192,27 @@ class DeltaExchangeClient:
             self.logger.error(f"Error finding suitable options: {e}")
             return []
     
-    def get_fills_history(self, page_size=50):
+    def get_fills_history(self, page_size=50, start_time=None, end_time=None):
         """
         Get trade history (fills) from Delta Exchange using official Trade History API
         Endpoint: /v2/fills
+        
+        Args:
+            page_size: Number of records to fetch (default 50)
+            start_time: Start time in microseconds (optional)
+            end_time: End time in microseconds (optional)
         """
         try:
             endpoint = "/v2/fills"
             params = {
                 'page_size': page_size
             }
+            
+            # Add date filtering if provided
+            if start_time:
+                params['start_time'] = int(start_time)
+            if end_time:
+                params['end_time'] = int(end_time)
             
             self.logger.info(f"Fetching fills history from /v2/fills with page_size={page_size}")
             

@@ -92,6 +92,19 @@
                     </div>
                 </div>
             </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="leverage" class="form-label">Leverage</label>
+                        <input type="number" class="form-control" id="leverage" name="leverage" 
+                               value="{{ config.get('leverage', 100) }}" min="1" max="200">
+                        <div class="form-text">Leverage multiplier for margin calculations (1x - 200x)</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <!-- Empty column for future settings -->
+                </div>
+            </div>
         </div>
     </div>
 
