@@ -326,12 +326,16 @@
                         <div class="col-lg-4 col-md-6">
                             <div class="card bg-dark border-secondary mb-3">
                                 <div class="card-body">
-                                    <h6><i class="bi bi-bezier2"></i> Williams Alligator</h6>
+                                    <h6><i class="bi bi-activity"></i> ATR (1H Volatility)</h6>
                                     <div class="d-flex justify-content-between">
-                                        <span>State: <span id="alligatorState">--</span></span>
-                                        <span class="badge" id="alligatorScore">0/3</span>
+                                        <span>State: <span id="atrState">--</span></span>
+                                        <span class="badge" id="atrScore">0/3</span>
                                     </div>
-                                    <small class="text-muted d-block" id="alligatorMeaning">--</small>
+                                    <small class="text-muted d-block" id="atrMeaning">--</small>
+                                    <div class="mt-2">
+                                        <small class="text-muted">Current: <span id="atrCurrent">--</span></small><br>
+                                        <small class="text-muted">30-Period Avg: <span id="atrAverage">--</span></small>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -700,10 +704,12 @@ function updateHigherTimeframeTrend() {
                 document.getElementById('dowMeaning').textContent = indicators.dow.meaning;
                 updateScoreBadge('dowScore', indicators.dow.score);
                 
-                // Williams Alligator
-                document.getElementById('alligatorState').textContent = indicators.alligator.state;
-                document.getElementById('alligatorMeaning').textContent = indicators.alligator.meaning;
-                updateScoreBadge('alligatorScore', indicators.alligator.score);
+                // ATR (Average True Range)
+                document.getElementById('atrState').textContent = indicators.atr.state;
+                document.getElementById('atrMeaning').textContent = indicators.atr.meaning;
+                document.getElementById('atrCurrent').textContent = indicators.atr.current_value || '--';
+                document.getElementById('atrAverage').textContent = indicators.atr.average_value || '--';
+                updateScoreBadge('atrScore', indicators.atr.score);
                 
                 // Calculate next update time (next :30 past the hour for Delta Exchange candles)
                 const nextUpdate = new Date();

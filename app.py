@@ -17,6 +17,14 @@ from logger_config import get_logger
 from candle_timing import is_candle_closed, get_last_candle_close_time, seconds_until_next_candle_close, format_candle_times_display
 from data_manager import get_data_manager
 
+# Import conditional trade components
+from conditional_trades import (
+    conditional_trade_bp, 
+    initialize_conditional_trades, 
+    shutdown_conditional_trades,
+    register_page_route
+)
+
 # Global indicator caches based on proper candle timing
 _indicator_cache = {
     '3m': {
@@ -34,6 +42,15 @@ _indicator_cache = {
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'  # Change this to a random secret key
+
+# Register conditional trade blueprint
+app.register_blueprint(conditional_trade_bp)
+
+# Register conditional trade page route
+register_page_route(app)
+
+# Global variables for conditional trading
+conditional_trade_components = None
 
 # Initialize historical data on startup
 def initialize_data_on_startup():
@@ -513,26 +530,49 @@ def calculate_higher_timeframe_indicators(df, bullish_threshold=3, bearish_thres
             
             return uptrend, downtrend
         
-        # Williams Alligator calculation
-        def williams_alligator(data):
-            jaw = data['close'].rolling(window=13).mean().shift(8)  # Blue line
-            teeth = data['close'].rolling(window=8).mean().shift(5)  # Red line
-            lips = data['close'].rolling(window=5).mean().shift(3)  # Green line
+        # ATR (Average True Range) calculation for 1-hour candles
+        def calculate_atr_trend(data, period=14):
+            # Calculate True Range
+            high_low = data['high'] - data['low']
+            high_close = abs(data['high'] - data['close'].shift(1))
+            low_close = abs(data['low'] - data['close'].shift(1))
             
-            # Alligator is sleeping when lines are intertwined
-            # Alligator is eating when price is above/below all lines
-            eating_up = (data['close'] > jaw) & (data['close'] > teeth) & (data['close'] > lips)
-            eating_down = (data['close'] < jaw) & (data['close'] < teeth) & (data['close'] < lips)
-            sleeping = ~(eating_up | eating_down)
+            true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            atr = true_range.rolling(window=period).mean()
             
-            return jaw, teeth, lips, eating_up, eating_down, sleeping
+            # Calculate ATR trend over last 30 periods
+            if len(atr) >= 30:
+                recent_atr = atr.iloc[-30:]  # Last 30 candles
+                atr_current = atr.iloc[-1]
+                atr_average = recent_atr.mean()
+                
+                # Determine trend based on current vs average
+                if atr_current > atr_average * 1.2:
+                    trend = 'High Volatility'
+                    is_bullish = True  # High volatility often precedes moves
+                elif atr_current > atr_average * 1.1:
+                    trend = 'Rising Volatility'
+                    is_bullish = True
+                elif atr_current < atr_average * 0.8:
+                    trend = 'Low Volatility'
+                    is_bullish = False  # Low volatility suggests consolidation
+                elif atr_current < atr_average * 0.9:
+                    trend = 'Declining Volatility'
+                    is_bullish = False
+                else:
+                    trend = 'Normal Volatility'
+                    is_bullish = None  # Neutral
+                    
+                return atr, atr_current, atr_average, trend, is_bullish
+            else:
+                return atr, 0, 0, 'Insufficient Data', None
         
         # Calculate all indicators
         fisher, fisher_signal = fisher_transform(df)
         tsi = true_strength_index(df)
         pivot, r1, s1, r2, s2 = calculate_pivot_points(df)
         uptrend, downtrend = dow_theory_analysis(df)
-        jaw, teeth, lips, eating_up, eating_down, sleeping = williams_alligator(df)
+        atr_series, atr_current, atr_average, atr_trend, atr_bullish = calculate_atr_trend(df)
         
         # Get latest values for scoring
         latest = df.iloc[-1]
@@ -544,7 +584,7 @@ def calculate_higher_timeframe_indicators(df, bullish_threshold=3, bearish_thres
             'tsi': 0, 
             'pivot': 0,
             'dow': 0,
-            'alligator': 0
+            'atr': 0
         }
         
         meanings = {
@@ -552,7 +592,7 @@ def calculate_higher_timeframe_indicators(df, bullish_threshold=3, bearish_thres
             'tsi': 'Neutral',
             'pivot': 'At Pivot',
             'dow': 'Sideways',
-            'alligator': 'Sleeping'
+            'atr': 'Normal Volatility'
         }
         
         # Fisher Transform scoring
@@ -635,20 +675,22 @@ def calculate_higher_timeframe_indicators(df, bullish_threshold=3, bearish_thres
                 scores['dow'] = -1
                 meanings['dow'] = 'Emerging Downtrend'
         
-        # Williams Alligator scoring
-        if latest_idx < len(eating_up) and latest_idx < len(eating_down):
-            if eating_up.iloc[-1]:
-                scores['alligator'] = 3
-                meanings['alligator'] = 'Eating Up'
-            elif eating_up.iloc[-3:].sum() >= 2:  # Recently eating up
-                scores['alligator'] = 1
-                meanings['alligator'] = 'Waking Up'
-            elif eating_down.iloc[-1]:
-                scores['alligator'] = -3
-                meanings['alligator'] = 'Eating Down' 
-            elif eating_down.iloc[-3:].sum() >= 2:  # Recently eating down
-                scores['alligator'] = -1
-                meanings['alligator'] = 'Waking Down'
+        # ATR scoring based on volatility trend
+        if atr_trend != 'Insufficient Data':
+            scores['atr'] = 0
+            meanings['atr'] = atr_trend
+            
+            if atr_bullish is True:  # High/Rising volatility
+                if atr_trend == 'High Volatility':
+                    scores['atr'] = 3
+                else:  # Rising Volatility
+                    scores['atr'] = 1
+            elif atr_bullish is False:  # Low/Declining volatility
+                if atr_trend == 'Low Volatility':
+                    scores['atr'] = -3
+                else:  # Declining Volatility
+                    scores['atr'] = -1
+            # else: Normal volatility gets 0 score
         
         # Calculate total score and trend determination
         total_score = sum(scores.values())
@@ -691,10 +733,12 @@ def calculate_higher_timeframe_indicators(df, bullish_threshold=3, bearish_thres
                     'score': scores['dow'],
                     'meaning': meanings['dow']
                 },
-                'alligator': {
-                    'state': meanings['alligator'],
-                    'score': scores['alligator'],
-                    'meaning': meanings['alligator']
+                'atr': {
+                    'state': meanings['atr'],
+                    'score': scores['atr'],
+                    'meaning': meanings['atr'],
+                    'current_value': round(atr_current, 4) if atr_current else 0,
+                    'average_value': round(atr_average, 4) if atr_average else 0
                 }
             }
         }
@@ -814,6 +858,7 @@ def save_settings():
             'position_size_usd': float(request.form.get('position_size_usd', 500)),
             'max_daily_loss': float(request.form.get('max_daily_loss', 2000)),
             'max_positions': int(request.form.get('max_positions', 2)),
+            'leverage': int(request.form.get('leverage', 100)),
             'futures_strategy': {
                 'enabled': request.form.get('futures_enabled') == 'on',
                 'long_signal_threshold': int(request.form.get('futures_long_threshold', 5)),
@@ -952,7 +997,8 @@ def trades():
 
 @app.route('/api/trades')
 def api_trades():
-    """Get trade history from Delta Exchange using official Trade History API"""
+    """Get trade history from Delta Exchange using official Trade History API with optional date filtering"""
+    from datetime import datetime
     try:
         config = config_manager.get_all_config()
         
@@ -962,8 +1008,25 @@ def api_trades():
         # Get USD to INR conversion rate
         usd_to_inr = float(config.get('USD', 85))
         
-        # Get trade history using Delta Exchange Trade History API
-        fills_response = delta_client.get_fills_history(page_size=50)
+        # Get date parameters from query string
+        selected_date = request.args.get('date')  # Format: YYYY-MM-DD
+        start_time = None
+        end_time = None
+        
+        if selected_date:
+            try:
+                # Convert date to microseconds for Delta API
+                date_obj = datetime.strptime(selected_date, '%Y-%m-%d')
+                start_time = int(date_obj.timestamp() * 1000000)  # Start of day in microseconds
+                end_time = start_time + (24 * 60 * 60 * 1000000)  # End of day in microseconds
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid date format. Use YYYY-MM-DD'
+                })
+        
+        # Get trade history using Delta Exchange Trade History API with date filtering
+        fills_response = delta_client.get_fills_history(page_size=100, start_time=start_time, end_time=end_time)
         
         if not isinstance(fills_response, dict) or 'result' not in fills_response:
             raise Exception("Invalid response format from Delta Exchange API")
@@ -987,10 +1050,22 @@ def api_trades():
             order_id = fill.get('order_id', '')
             
             # Calculate values in USD and INR
-            trade_value_usd = size * price
+            trade_value_usd = size * price  # Total notional value
             trade_value_inr = trade_value_usd * usd_to_inr
             commission_inr = commission * usd_to_inr
             price_inr = price * usd_to_inr
+            
+            # Calculate actual margin used based on leverage
+            leverage = float(config.get('leverage', config.get('futures_strategy', {}).get('leverage', 100)))
+            
+            # Debug logging - remove after testing
+            if fill == fills[0]:  # Only log for first trade to avoid spam
+                app_logger.info(f"DEBUG LEVERAGE: config.get('leverage'): {config.get('leverage')}")
+                app_logger.info(f"DEBUG LEVERAGE: futures leverage fallback: {config.get('futures_strategy', {}).get('leverage')}")
+                app_logger.info(f"DEBUG LEVERAGE: final leverage used: {leverage}")
+            
+            margin_used_usd = trade_value_usd / leverage if leverage > 0 else trade_value_usd
+            margin_used_inr = margin_used_usd * usd_to_inr
             
             formatted_trade = {
                 'trade_id': f"fill_{fill_id}",
@@ -1000,8 +1075,11 @@ def api_trades():
                 'size': size,
                 'price': price,
                 'price_inr': price_inr,
-                'value': trade_value_usd,
-                'value_inr': trade_value_inr,
+                'value': trade_value_usd,  # Total notional value
+                'value_inr': trade_value_inr,  # Total notional value in INR
+                'margin_used': margin_used_usd,  # Actual margin used (USD)
+                'margin_used_inr': margin_used_inr,  # Actual margin used (INR)
+                'leverage': leverage,  # Leverage used
                 'fee': commission,
                 'fee_inr': commission_inr,
                 'timestamp': created_at,
@@ -1017,11 +1095,43 @@ def api_trades():
         # Sort by timestamp (most recent first)
         all_trades.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         
+        # Get profits and portfolio data from positions
+        try:
+            # Debug: Check paper trading mode
+            app_logger.info(f"DEBUG PROFIT: paper_trading setting: {config.get('paper_trading')}")
+            
+            # Get comprehensive P&L data from fills API (includes closed positions)
+            profit_data = delta_client.get_total_realized_pnl_from_fills(days_back=30)
+            portfolio_data = delta_client.get_portfolio_summary()
+            
+            # Debug: Log raw profit data
+            app_logger.info(f"DEBUG PROFIT: Raw realized PnL from fills (USD): {profit_data['total_realized_pnl']}")
+            app_logger.info(f"DEBUG PROFIT: Total fills analyzed: {profit_data.get('total_fills', 0)}")
+            app_logger.info(f"DEBUG PROFIT: Win rate: {profit_data.get('win_rate', 0):.1f}%")
+            app_logger.info(f"DEBUG PROFIT: Raw unrealized PnL (USD): {portfolio_data['unrealized_pnl']}")
+            
+            total_realized_pnl = profit_data['total_realized_pnl'] * usd_to_inr  # Convert to INR
+            total_unrealized_pnl = portfolio_data['unrealized_pnl'] * usd_to_inr  # Convert to INR
+            
+            # Debug: Log converted values
+            app_logger.info(f"DEBUG PROFIT: Converted realized PnL (INR): {total_realized_pnl}")
+            app_logger.info(f"DEBUG PROFIT: Converted unrealized PnL (INR): {total_unrealized_pnl}")
+            
+        except Exception as e:
+            app_logger.error(f"Could not fetch profit data: {e}")
+            app_logger.error(f"Exception details: {type(e).__name__}: {str(e)}")
+            total_realized_pnl = 0.0
+            total_unrealized_pnl = 0.0
+        
         return jsonify({
             'success': True,
             'trades': all_trades,
             'count': len(all_trades),
             'usd_to_inr_rate': usd_to_inr,
+            'leverage_used': leverage,
+            'total_realized_pnl_inr': total_realized_pnl,
+            'total_unrealized_pnl_inr': total_unrealized_pnl,
+            'selected_date': selected_date,
             'timestamp': datetime.now().isoformat(),
             'source': 'Delta Exchange'
         })
@@ -1494,31 +1604,57 @@ def api_higher_timeframe_trend():
                     
                     return uptrend, downtrend
                 
-                # Williams Alligator calculation
-                def williams_alligator(data):
-                    jaw = data['close'].rolling(window=13).mean().shift(8)
-                    teeth = data['close'].rolling(window=8).mean().shift(5)
-                    lips = data['close'].rolling(window=5).mean().shift(3)
+                # ATR (Average True Range) calculation for 1-hour candles
+                def calculate_atr_trend(data, period=14):
+                    # Calculate True Range
+                    high_low = data['high'] - data['low']
+                    high_close = abs(data['high'] - data['close'].shift(1))
+                    low_close = abs(data['low'] - data['close'].shift(1))
                     
-                    eating_up = (data['close'] > jaw) & (data['close'] > teeth) & (data['close'] > lips)
-                    eating_down = (data['close'] < jaw) & (data['close'] < teeth) & (data['close'] < lips)
+                    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+                    atr = true_range.rolling(window=period).mean()
                     
-                    return jaw, teeth, lips, eating_up, eating_down
+                    # Calculate ATR trend over last 30 periods
+                    if len(atr) >= 30:
+                        recent_atr = atr.iloc[-30:]  # Last 30 candles
+                        atr_current = atr.iloc[-1]
+                        atr_average = recent_atr.mean()
+                        
+                        # Determine trend based on current vs average
+                        if atr_current > atr_average * 1.2:
+                            trend = 'High Volatility'
+                            is_bullish = True  # High volatility often precedes moves
+                        elif atr_current > atr_average * 1.1:
+                            trend = 'Rising Volatility'
+                            is_bullish = True
+                        elif atr_current < atr_average * 0.8:
+                            trend = 'Low Volatility'
+                            is_bullish = False  # Low volatility suggests consolidation
+                        elif atr_current < atr_average * 0.9:
+                            trend = 'Declining Volatility'
+                            is_bullish = False
+                        else:
+                            trend = 'Normal Volatility'
+                            is_bullish = None  # Neutral
+                            
+                        return atr, atr_current, atr_average, trend, is_bullish
+                    else:
+                        return atr, 0, 0, 'Insufficient Data', None
                 
                 # Calculate all indicators using raw data for display
                 fisher, fisher_signal = fisher_transform(df_1h_raw)
                 tsi = true_strength_index(df_1h_raw)
                 pivot, r1, s1 = calculate_pivot_points(df_1h_raw)
                 uptrend, downtrend = dow_theory_analysis(df_1h_raw)
-                jaw, teeth, lips, eating_up, eating_down = williams_alligator(df_1h_raw)
+                atr_series, atr_current, atr_average, atr_trend, atr_bullish = calculate_atr_trend(df_1h_raw)
                 
                 # Get latest values and calculate scores
                 latest_candle = df_1h_raw.iloc[-1]
                 latest_idx = len(df_1h_raw) - 1
                 
                 # Scoring system
-                scores = {'fisher': 0, 'tsi': 0, 'pivot': 0, 'dow': 0, 'alligator': 0}
-                meanings = {'fisher': 'Neutral', 'tsi': 'Neutral', 'pivot': 'At Pivot', 'dow': 'Sideways', 'alligator': 'Sleeping'}
+                scores = {'fisher': 0, 'tsi': 0, 'pivot': 0, 'dow': 0, 'atr': 0}
+                meanings = {'fisher': 'Neutral', 'tsi': 'Neutral', 'pivot': 'At Pivot', 'dow': 'Sideways', 'atr': 'Normal Volatility'}
                 
                 # Fisher Transform scoring
                 if not pd.isna(fisher.iloc[-1]) and not pd.isna(fisher_signal.iloc[-1]):
@@ -1600,20 +1736,22 @@ def api_higher_timeframe_trend():
                         scores['dow'] = -1
                         meanings['dow'] = 'Emerging Downtrend'
                 
-                # Williams Alligator scoring
-                if latest_idx < len(eating_up) and latest_idx < len(eating_down):
-                    if eating_up.iloc[-1]:
-                        scores['alligator'] = 3
-                        meanings['alligator'] = 'Eating Up'
-                    elif eating_up.iloc[-3:].sum() >= 2:
-                        scores['alligator'] = 1
-                        meanings['alligator'] = 'Waking Up'
-                    elif eating_down.iloc[-1]:
-                        scores['alligator'] = -3
-                        meanings['alligator'] = 'Eating Down'
-                    elif eating_down.iloc[-3:].sum() >= 2:
-                        scores['alligator'] = -1
-                        meanings['alligator'] = 'Waking Down'
+                # ATR scoring based on volatility trend
+                if atr_trend != 'Insufficient Data':
+                    scores['atr'] = 0
+                    meanings['atr'] = atr_trend
+                    
+                    if atr_bullish is True:  # High/Rising volatility
+                        if atr_trend == 'High Volatility':
+                            scores['atr'] = 3
+                        else:  # Rising Volatility
+                            scores['atr'] = 1
+                    elif atr_bullish is False:  # Low/Declining volatility
+                        if atr_trend == 'Low Volatility':
+                            scores['atr'] = -3
+                        else:  # Declining Volatility
+                            scores['atr'] = -1
+                    # else: Normal volatility gets 0 score
                 
                 # Calculate total score
                 total_score = sum(scores.values())
@@ -1657,10 +1795,12 @@ def api_higher_timeframe_trend():
                             'score': scores['dow'],
                             'meaning': meanings['dow']
                         },
-                        'alligator': {
-                            'state': meanings['alligator'],
-                            'score': scores['alligator'],
-                            'meaning': meanings['alligator']
+                        'atr': {
+                            'state': meanings['atr'],
+                            'score': scores['atr'],
+                            'meaning': meanings['atr'],
+                            'current_value': round(atr_current, 4) if atr_current else 0,
+                            'average_value': round(atr_average, 4) if atr_average else 0
                         }
                     },
                     'timestamp': datetime.now().isoformat()
@@ -1681,7 +1821,7 @@ def api_higher_timeframe_trend():
                         'tsi': {'value': None, 'score': 0, 'meaning': 'Data unavailable'},
                         'pivot': {'position': '--', 'score': 0, 'meaning': 'Data unavailable'},
                         'dow': {'signal': '--', 'score': 0, 'meaning': 'Data unavailable'},
-                        'alligator': {'state': '--', 'score': 0, 'meaning': 'Data unavailable'}
+                        'atr': {'state': '--', 'score': 0, 'meaning': 'Data unavailable'}
                     },
                     'timestamp': datetime.now().isoformat()
                 })
@@ -1699,7 +1839,7 @@ def api_higher_timeframe_trend():
                     'tsi': {'value': None, 'score': 0, 'meaning': 'No data'},
                     'pivot': {'position': '--', 'score': 0, 'meaning': 'No data'},
                     'dow': {'signal': '--', 'score': 0, 'meaning': 'No data'},
-                    'alligator': {'state': '--', 'score': 0, 'meaning': 'No data'}
+                    'atr': {'state': '--', 'score': 0, 'meaning': 'No data'}
                 },
                 'timestamp': datetime.now().isoformat()
             })
@@ -1717,7 +1857,7 @@ def api_higher_timeframe_trend():
                 'tsi': {'value': None, 'score': 0, 'meaning': 'Connection error'},
                 'pivot': {'position': '--', 'score': 0, 'meaning': 'Connection error'},
                 'dow': {'signal': '--', 'score': 0, 'meaning': 'Connection error'},
-                'alligator': {'state': '--', 'score': 0, 'meaning': 'Connection error'}
+                'atr': {'state': '--', 'score': 0, 'meaning': 'Connection error'}
             },
             'timestamp': datetime.now().isoformat()
         })
@@ -2166,10 +2306,67 @@ def api_candle_times(trading_start_time):
             '1h_times': '18:30, 19:30, 20:30...'
         })
 
+def initialize_conditional_trades_on_startup():
+    """Initialize conditional trading components on startup"""
+    global conditional_trade_components
+    
+    try:
+        # Get existing delta client to reuse
+        delta_client = get_delta_client()
+        
+        # Initialize conditional trade components
+        conditional_trade_components = initialize_conditional_trades(delta_client)
+        
+        if conditional_trade_components.get('success'):
+            app_logger.info("Conditional trades initialized successfully")
+        else:
+            app_logger.error(f"Failed to initialize conditional trades: {conditional_trade_components.get('error')}")
+            
+    except Exception as e:
+        app_logger.error(f"Exception initializing conditional trades: {e}")
+
+# Initialize conditional trades in the background after data initialization
+def initialize_all_components():
+    """Initialize all components in background thread"""
+    try:
+        # Wait a bit for data manager to initialize
+        import time
+        time.sleep(2)
+        
+        # Initialize conditional trades
+        initialize_conditional_trades_on_startup()
+        
+    except Exception as e:
+        app_logger.error(f"Error in component initialization: {e}")
+
+# Start component initialization in background thread
+components_init_thread = threading.Thread(target=initialize_all_components, daemon=True)
+components_init_thread.start()
+
+
+def shutdown_handler():
+    """Cleanup function for graceful shutdown"""
+    try:
+        # Shutdown conditional trading components
+        shutdown_conditional_trades()
+        app_logger.info("Conditional trades shutdown complete")
+    except Exception as e:
+        app_logger.error(f"Error during conditional trades shutdown: {e}")
+
+
+# Register shutdown handler
+import atexit
+atexit.register(shutdown_handler)
+
+
 if __name__ == '__main__':
     # Ensure templates and static directories exist
     os.makedirs('templates', exist_ok=True)
     os.makedirs('static/css', exist_ok=True)
     os.makedirs('static/js', exist_ok=True)
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    try:
+        app.run(debug=True, host='0.0.0.0', port=5000)
+    except KeyboardInterrupt:
+        print("\nGraceful shutdown initiated...")
+        shutdown_handler()
